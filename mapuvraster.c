@@ -560,7 +560,7 @@ int msUVRASTERLayerWhichShapes(layerObj *layer, rectObj rect, int isQuery)
 
 
   map_cellsize = MS_MAX(MS_CELLSIZE(rect.minx, rect.maxx,layer->map->width),
-                        MS_CELLSIZE(rect.miny,rect.maxy,layer->map->height));
+                        MS_CELLSIZE(rect.miny,rect.maxy,layer->map->height,layer->map->pixeladjustment));
   map_tmp->cellsize = map_cellsize*spacing;
   map_tmp->extent.minx = rect.minx-(0.5*map_cellsize)+(0.5*map_tmp->cellsize);
   map_tmp->extent.miny = rect.miny-(0.5*map_cellsize)+(0.5*map_tmp->cellsize);
@@ -577,7 +577,7 @@ int msUVRASTERLayerWhichShapes(layerObj *layer, rectObj rect, int isQuery)
       /* Request spanning on the 2 hemispheres => drawing whole planet */
       /* Take only into account vertical resolution, as horizontal one */
       /* will be unreliable (assuming square pixels...) */
-      map_cellsize = MS_CELLSIZE(rect.miny,rect.maxy,layer->map->height);
+      map_cellsize = MS_CELLSIZE(rect.miny,rect.maxy,layer->map->height,layer->map->pixeladjustment);
       map_tmp->cellsize = map_cellsize*spacing;
 
       width = 360.0 / map_tmp->cellsize;
