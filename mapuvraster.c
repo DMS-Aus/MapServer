@@ -559,7 +559,7 @@ int msUVRASTERLayerWhichShapes(layerObj *layer, rectObj rect, int isQuery)
   }
 
 
-  map_cellsize = MS_MAX(MS_CELLSIZE(rect.minx, rect.maxx,layer->map->width),
+  map_cellsize = MS_MAX(MS_CELLSIZE(rect.minx, rect.maxx,layer->map->width,layer->map->pixeladjustment),
                         MS_CELLSIZE(rect.miny,rect.maxy,layer->map->height,layer->map->pixeladjustment));
   map_tmp->cellsize = map_cellsize*spacing;
   map_tmp->extent.minx = rect.minx-(0.5*map_cellsize)+(0.5*map_tmp->cellsize);
