@@ -1,3 +1,5 @@
+%option never-interactive
+
 %{
 /*
 ** READ ME FIRST!
@@ -7,6 +9,7 @@
 ** when maplexer.l is altered.
 */
 
+#define YY_NO_INPUT
 
 /* C declarations */
 #include <stdlib.h>
@@ -44,7 +47,7 @@ int msyystate=MS_TOKENIZE_DEFAULT;
 char *msyystring=NULL;
 char *msyybasepath=NULL;
 char *msyystring_buffer_ptr;
-int  msyystring_buffer_size = 256;
+int  msyystring_buffer_size = 0;
 int  msyystring_size;
 char msyystring_begin;
 char *msyystring_buffer = NULL;
@@ -83,13 +86,16 @@ char path[MS_MAXPATHLEN];
 %s EXPRESSION_STRING
 %s INCLUDE
 %s MSSTRING
+%s MULTILINE_COMMENT
 
 %%
        if (msyystring_buffer == NULL)
+       {
+           msyystring_buffer_size = 256;
            msyystring_buffer = (char*) msSmallMalloc(sizeof(char) * msyystring_buffer_size);
+       }
 
        msyystring_buffer[0] = '\0';
-       msyystring_buffer_size = 0;
        switch(msyystate) {
        case(MS_TOKENIZE_DEFAULT):
          break;
@@ -159,7 +165,13 @@ char path[MS_MAXPATHLEN];
 
 <INITIAL,URL_STRING,EXPRESSION_STRING,INCLUDE>[ \t\r]+             ;
 
-<INITIAL>#.*                                   { if (msyyreturncomments) return(MS_COMMENT); }
+<INITIAL>(\/\/|#).*                            { if (msyyreturncomments) return(MS_COMMENT); }
+
+<INITIAL>\/\*                                  { BEGIN(MULTILINE_COMMENT); }
+<MULTILINE_COMMENT>\*\/                        { BEGIN(INITIAL); }
+<MULTILINE_COMMENT>[^*\n]+                     ;
+<MULTILINE_COMMENT>\*                          ;
+<MULTILINE_COMMENT>\n                          { msyylineno++; }
 
 <URL_VARIABLE>_|\.                             ;
 
@@ -177,7 +189,7 @@ char path[MS_MAXPATHLEN];
 <EXPRESSION_STRING>=\*                         { MS_LEXER_RETURN_TOKEN(MS_TOKEN_COMPARISON_IEQ); }
 <EXPRESSION_STRING>~\*                         { MS_LEXER_RETURN_TOKEN(MS_TOKEN_COMPARISON_IRE); }
 
-<EXPRESSION_STRING>in                          { MS_LEXER_RETURN_TOKEN(IN); }
+<EXPRESSION_STRING>in                          { MS_LEXER_RETURN_TOKEN(MS_TOKEN_COMPARISON_IN); /* was IN */ }
 
 <EXPRESSION_STRING>area                        { MS_LEXER_RETURN_TOKEN(MS_TOKEN_FUNCTION_AREA); }
 <EXPRESSION_STRING>length                      { MS_LEXER_RETURN_TOKEN(MS_TOKEN_FUNCTION_LENGTH); }
@@ -582,7 +594,7 @@ char path[MS_MAXPATHLEN];
   return(MS_TOKEN_LITERAL_TIME);
 }
 
-<INITIAL,URL_STRING>\/[^\/]*\/i                {
+<INITIAL,URL_STRING>\/[^*]{1}[^\/]*\/i         {
                                                  msyytext++;
                                                  msyytext[strlen(msyytext)-2] = '\0';
                                                  MS_LEXER_STRING_REALLOC(msyystring_buffer, strlen(msyytext), 
@@ -591,7 +603,7 @@ char path[MS_MAXPATHLEN];
                                                  return(MS_IREGEX);
                                                }
 
-<INITIAL,URL_STRING>\/[^\/]*\/                 {
+<INITIAL,URL_STRING>\/[^*]{1}[^\/]*\/          {
                                                  msyytext++;
                                                  msyytext[strlen(msyytext)-1] = '\0';
                                                  MS_LEXER_STRING_REALLOC(msyystring_buffer, strlen(msyytext), 

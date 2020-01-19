@@ -285,6 +285,7 @@ int msGraticuleLayerNextShape(layerObj *layer, shapeObj *shape)
   shape->type = MS_SHAPE_LINE;
   shape->line = (lineObj *) msSmallMalloc(sizeof( lineObj ));
   shape->line->numpoints = (int) pInfo->maxsubdivides;
+  shape->line->point = NULL;
 
   /*
    * Subdivide and draw current arc, rendering the arc labels first
@@ -994,6 +995,7 @@ int msGraticuleLayerInitializeVirtualTable(layerObj *layer)
   layer->vtable->LayerNextShape = msGraticuleLayerNextShape;
   /* layer->vtable->LayerResultsGetShape, use default */
   layer->vtable->LayerGetShape = msGraticuleLayerGetShape;
+  /* layer->vtable->LayerGetShapeCount, use default */
   layer->vtable->LayerClose = msGraticuleLayerClose;
   layer->vtable->LayerGetItems = msGraticuleLayerGetItems;
   layer->vtable->LayerGetExtent = msGraticuleLayerGetExtent;

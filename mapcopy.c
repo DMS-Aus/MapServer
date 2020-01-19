@@ -204,10 +204,12 @@ int msCopyFontSet(fontSetObj *dst, fontSetObj *src, mapObj *map)
 
 int msCopyExpression(expressionObj *dst, expressionObj *src)
 {
+  if((dst->type == MS_REGEX) && dst->compiled) ms_regfree(&(dst->regex));
+  dst->compiled = MS_FALSE;
+
   MS_COPYSTRING(dst->string, src->string);
   MS_COPYSTELEM(type);
   MS_COPYSTELEM(flags);
-  dst->compiled = MS_FALSE;
 
   return MS_SUCCESS;
 }
@@ -500,6 +502,7 @@ int msCopyStyle(styleObj *dst, styleObj *src)
   MS_COPYSTELEM(offsetx);
   MS_COPYSTELEM(offsety);
   MS_COPYSTELEM(angle);
+  MS_COPYSTELEM(autoangle);
   MS_COPYSTELEM(minvalue);
   MS_COPYSTELEM(maxvalue);
   MS_COPYSTELEM(opacity);
@@ -931,10 +934,17 @@ int msCopyCompositingFilter(CompositingFilter **pdst, CompositingFilter *src) {
     *pdst = NULL;
     return MS_SUCCESS;
   }
-  if(!dst) {
-    dst = *pdst = msSmallMalloc(sizeof(CompositingFilter));
-  } 
-  dst->filter = msStrdup(src->filter);
+  while(src) {
+    if(!dst) {
+      dst = *pdst = msSmallMalloc(sizeof(CompositingFilter));
+    } else {
+      dst->next = msSmallMalloc(sizeof(CompositingFilter));
+      dst = dst->next;
+    }
+    dst->filter = msStrdup(src->filter);
+    dst->next = NULL;
+    src = src->next;
+  }
   return MS_SUCCESS;
 }
 

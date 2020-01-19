@@ -16,8 +16,8 @@ include(CheckCSourceCompiles)
 
 
 set (MapServer_VERSION_MAJOR 7)
-set (MapServer_VERSION_MINOR 0)
-set (MapServer_VERSION_REVISION 4)
+set (MapServer_VERSION_MINOR 4)
+set (MapServer_VERSION_REVISION 3)
 set (MapServer_VERSION_SUFFIX "")
 
 set(TARGET_VERSION_MAJOR ${MapServer_VERSION_MAJOR})
@@ -33,6 +33,10 @@ endif(MapServer_IS_DEV_VERSION)
 MATH(EXPR MapServer_VERSION_NUM "${MapServer_VERSION_MAJOR}*10000+${MapServer_VERSION_MINOR}*100+${MapServer_VERSION_REVISION}")
 
 SET(CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake ${CMAKE_MODULE_PATH})
+
+# Add custom function to check Python modules are installed
+include(FindPythonModule)
+
 if (APPLE)
   set(CMAKE_FIND_FRAMEWORK "LAST")
 endif (APPLE)
@@ -92,7 +96,6 @@ endif(NOT(WIN32))
 check_function_exists("strrstr"          HAVE_STRRSTR)
 check_function_exists("strcasecmp"  HAVE_STRCASECMP)
 check_function_exists("strcasestr"  HAVE_STRCASESTR)
-check_function_exists("strdup"  HAVE_STRDUP)
 check_function_exists("strlcat"  HAVE_STRLCAT)
 check_function_exists("strlcpy"  HAVE_STRLCPY)
 check_function_exists("strlen"  HAVE_STRLEN)
@@ -117,6 +120,7 @@ include_directories(${CMAKE_CURRENT_BINARY_DIR})
 
 #options suported by the cmake builder
 option(WITH_PROJ "Choose if reprojection support should be built in" ON)
+option(WITH_PROTOBUFC "Choose if protocol buffers support should be built in (required for vector tiles)" ON)
 option(WITH_KML "Enable native KML output support (requires libxml2 support)" OFF)
 option(WITH_SOS "Enable SOS Server support (requires PROJ and libxml2 support)" OFF)
 option(WITH_WMS "Enable WMS Server support (requires proj support)" ON)
@@ -142,6 +146,7 @@ option(WITH_THREAD_SAFETY "Choose if a thread-safe version of libmapserver shoul
 option(WITH_GIF "Enable GIF support (for PIXMAP loading)" ON)
 option(WITH_PYTHON "Enable Python mapscript support" OFF)
 option(WITH_PHP "Enable PHP mapscript support" OFF)
+option(WITH_PHPNG "Enable PHPNG (SWIG) mapscript support" OFF)
 option(WITH_PERL "Enable Perl mapscript support" OFF)
 option(WITH_RUBY "Enable Ruby mapscript support" OFF)
 option(WITH_JAVA "Enable Java mapscript support" OFF)
@@ -166,8 +171,8 @@ option(WITH_GENERIC_NINT "generic rounding" OFF)
 
 # Add compiler flags for warnings
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_COMPILER_IS_GNUCC)
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wdeclaration-after-statement")
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Werror=format-security -Wdeclaration-after-statement")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Werror=format-security")
 endif()
 
 if(NOT DEFINED CMAKE_INSTALL_LIBDIR)
@@ -258,11 +263,12 @@ mapprojhack.c maptree.c mapdebug.c maplexer.c mapquantization.c mapunion.c
 mapdraw.c maplibxml2.c mapquery.c maputil.c strptime.c mapdrawgdal.c
 mapraster.c mapuvraster.c mapdummyrenderer.c mapobject.c maprasterquery.c
 mapwcs.c maperror.c mapogcfilter.c mapregex.c mapwcs11.c mapfile.c
-mapogcfiltercommon.c maprendering.c mapwcs20.c mapogcsld.c
+mapogcfiltercommon.c maprendering.c mapwcs20.c mapogcsld.c mapmetadata.c
 mapresample.c mapwfs.c mapgdal.c mapogcsos.c mapscale.c mapwfs11.c mapwfs20.c
 mapgeomtransform.c mapogroutput.c mapwfslayer.c mapagg.cpp mapkml.cpp
 mapgeomutil.cpp mapkmlrenderer.cpp fontcache.c textlayout.c maputfgrid.cpp
-mapogr.cpp mapcontour.c mapsmoothing.c mapv8.cpp ${REGEX_SOURCES} kerneldensity.c)
+mapogr.cpp mapcontour.c mapsmoothing.c mapv8.cpp ${REGEX_SOURCES} kerneldensity.c 
+mapcompositingfilter.c mapmvt.c)
 
 set(mapserver_HEADERS
 cgiutil.h dejavu-sans-condensed.h dxfcolor.h fontcache.h hittest.h mapagg.h
@@ -273,8 +279,39 @@ mappostgis.h mapprimitive.h mapproject.h mapraster.h mapregex.h mapresample.h
 mapserver-api.h mapserver.h mapserv.h mapshape.h mapsymbol.h maptemplate.h
 mapthread.h maptile.h maptime.h maptree.h maputfgrid.h mapwcs.h uthash.h)
 
+if(WIN32)
+	configure_file(
+	  ${CMAKE_CURRENT_SOURCE_DIR}/version.rc.in
+	  ${CMAKE_CURRENT_BINARY_DIR}/version.rc
+	  @ONLY)
+	set(mapserver_SOURCES ${mapserver_SOURCES} ${CMAKE_CURRENT_BINARY_DIR}/version.rc)
+endif(WIN32)
+
+if(WITH_PROTOBUFC)
+  find_package(ProtobufC)
+  if(NOT PROTOBUFC_FOUND)
+    report_optional_not_found(PROTOBUFC)
+ else(NOT PROTOBUFC_FOUND)
+   list(APPEND ALL_INCLUDE_DIRS ${PROTOBUFC_INCLUDE_DIR})
+
+   FILE(MAKE_DIRECTORY ${PROJECT_BINARY_DIR}/renderers/mvt)
+    # Create custom command for protoc-c
+    ADD_CUSTOM_COMMAND(
+       COMMAND ${PROTOBUFC_COMPILER}
+       ARGS --c_out=${PROJECT_BINARY_DIR}/renderers/mvt --proto_path=${PROJECT_SOURCE_DIR}/renderers/mvt ${PROJECT_SOURCE_DIR}/renderers/mvt/vector_tile.proto
+       OUTPUT ${PROJECT_BINARY_DIR}/renderers/mvt/vector_tile.pb-c.c ${PROJECT_BINARY_DIR}/renderers/mvt/vector_tile.pb-c.h
+    )
+
+    SET_SOURCE_FILES_PROPERTIES(${PROJECT_BINARY_DIR}/renderers/mvt/vector_tile.pb-c.h ${PROJECT_BINARY_DIR}/renderers/mvt/vector_tile.pb-c.c GENERATED)
+    set (vectortile_SOURCES ${PROJECT_BINARY_DIR}/renderers/mvt/vector_tile.pb-c.c)
+
+    set (USE_PBF 1)
+ endif(NOT PROTOBUFC_FOUND)
+endif (WITH_PROTOBUFC)
+
+
 if(BUILD_DYNAMIC)
-  add_library(mapserver SHARED ${mapserver_SOURCES} ${agg_SOURCES} ${v8_SOURCES})
+  add_library(mapserver SHARED ${vectortile_SOURCES} ${mapserver_SOURCES} ${agg_SOURCES} ${v8_SOURCES})
   set_target_properties( mapserver  PROPERTIES
     VERSION ${MapServer_VERSION_STRING}
     SOVERSION 2
@@ -282,7 +319,7 @@ if(BUILD_DYNAMIC)
 endif(BUILD_DYNAMIC)
 
 if(BUILD_STATIC)
-  add_library(mapserver_static STATIC ${mapserver_SOURCES} ${agg_SOURCES} ${v8_SOURCES})
+  add_library(mapserver_static STATIC ${vectortile_SOURCES} ${mapserver_SOURCES} ${agg_SOURCES} ${v8_SOURCES})
   set_target_properties( mapserver_static PROPERTIES
     VERSION ${MapServer_VERSION_STRING}
     SOVERSION 2
@@ -362,6 +399,12 @@ if(WITH_PROJ)
     set (USE_PROJ 1)
  endif(NOT PROJ_FOUND)
 endif (WITH_PROJ)
+
+if(USE_PBF)
+    include_directories(${PROJECT_BINARY_DIR}/renderers/mvt)
+    include_directories(${PROTOBUFC_INCLUDE_DIR})
+    ms_link_libraries( ${PROTOBUFC_LIBRARY})
+endif()
 
 if(WITH_PIXMAN)
   find_package(Pixman)
@@ -826,6 +869,11 @@ if(WITH_PHP)
    set(USE_PHP_MAPSCRIPT 1)
 endif(WITH_PHP)
 
+if(WITH_PHPNG)
+   add_subdirectory("mapscript/phpng")
+   set(USE_PHPNG_MAPSCRIPT 1)
+endif(WITH_PHPNG)
+
 if(WITH_APACHE_MODULE)
    add_subdirectory("apache")
    set(USE_APACHE_MODULE 1)
@@ -857,7 +905,10 @@ ms_link_libraries( ${CMAKE_DL_LIBS} m )
 endif(UNIX)
 
 if (WIN32)
-ms_link_libraries( ${MS_EXTERNAL_LIBS} ws2_32.lib)
+    ms_link_libraries( ${MS_EXTERNAL_LIBS} ws2_32.lib)
+    if (MSVC)
+        set_target_properties(mapserver PROPERTIES COMPILE_FLAGS "/wd4267 /wd4244 /wd4018")
+    endif(MSVC)
 endif (WIN32)
 
 configure_file (
@@ -914,6 +965,7 @@ status_optional_component("LIBXML2" "${USE_LIBXML2}" "${LIBXML2_LIBRARY}")
 status_optional_component("POSTGIS" "${USE_POSTGIS}" "${POSTGRESQL_LIBRARY}")
 status_optional_component("GEOS" "${USE_GEOS}" "${GEOS_LIBRARY}")
 status_optional_component("FastCGI" "${USE_FASTCGI}" "${FCGI_LIBRARY}")
+status_optional_component("PROTOBUFC" "${USE_PBF}" "${PROTOBUFC_LIBRARY}")
 if(USE_ORACLESPATIAL OR USE_ORACLE_PLUGIN)
   if(USE_ORACLESPATIAL)
     status_optional_component("Oracle Spatial" "${USE_ORACLESPATIAL}" "${ORACLE_LIBRARY}")
@@ -943,6 +995,7 @@ status_optional_feature("XML Mapfile support" "${USE_XMLMAPFILE}")
 message(STATUS " * Mapscripts")
 status_optional_feature("Python" "${USE_PYTHON_MAPSCRIPT}")
 status_optional_feature("PHP" "${USE_PHP_MAPSCRIPT}")
+status_optional_feature("PHPNG" "${USE_PHPNG_MAPSCRIPT}")
 status_optional_feature("PERL" "${USE_PERL_MAPSCRIPT}")
 status_optional_feature("RUBY" "${USE_RUBY_MAPSCRIPT}")
 status_optional_feature("JAVA" "${USE_JAVA_MAPSCRIPT}")

@@ -39,105 +39,8 @@
 
 
 
-/**
- * replace wrap characters with \n , respecting maximal line length.
- *
- * returns a pointer to the newly allocated text. memory is controlled
- * inside this function, so the caller MUST use the pointer returned by
- * the function:
- * text = msWrapText(label,text);
- *
- * TODO/FIXME: function will produce erroneous/crashing? results
- * if the wrap character is encoded with multiple bytes
- *
- * see http://mapserver.org/development/rfc/ms-rfc-40.html
- * for a summary of how wrap/maxlength interact on the result
- * of the text transformation
- */
-char *msWrapText(char *text, char wrap, int maxlength)
-{
-  if(!text) /*not an error if no text*/
-    return text;
-  if(maxlength == 0) {
-    if(wrap!='\0') {
-      /* if maxlength = 0 *and* a wrap character was specified,
-       * replace all wrap characters by \n
-       * this is the traditional meaning of the wrap character
-       */
-      msReplaceChar(text, wrap, '\n');
-    }
-    /* if neither maxlength, nor wrap were specified,
-     * don't transform this text */
-    return text;
-  } else if(maxlength>0) {
-    if(wrap!='\0') {
-      /* split input text at the wrap character, only if
-       * the current line length is over maxlength */
 
-      /* TODO: check if the wrap character is a valid byte
-       * inside a multibyte utf8 glyph. if so, the msCountChars
-       * will return an erroneous value */
-      int numwrapchars = msCountChars(text,wrap);
 
-      if(numwrapchars > 0) {
-        int num_cur_glyph_on_line = 0; /*count for the number of glyphs
-                                                   on the current line*/
-        char *textptr = text;
-        char glyph[11]; /*storage for unicode fetching function*/
-        int glyphlen = 0; /*size of current glyph in bytes*/
-        while((glyphlen = msGetNextGlyph((const char**)&textptr,glyph))>0) {
-          num_cur_glyph_on_line++;
-          if(*glyph == wrap && num_cur_glyph_on_line>=(maxlength)) {
-            /*FIXME (if wrap becomes something other than char):*/
-            *(textptr-1)='\n'; /*replace wrap char with a \n*/
-            num_cur_glyph_on_line=0; /*reset count*/
-          }
-        }
-        return text;
-      } else {
-        /*there are no characters available for wrapping*/
-        return text;
-      }
-    } else {
-      /* if no wrap character was specified, but a maxlength was,
-       * don't draw this label if it is longer than the specified maxlength*/
-      if(msGetNumGlyphs(text)>maxlength) {
-        free(text);
-        return NULL;
-      } else {
-        return text;
-      }
-    }
-  } else {
-    /* negative maxlength: we split lines unconditionally, i.e. without
-    loooking for a wrap character*/
-    int numglyphs,numlines;
-    maxlength = -maxlength; /* use a positive value*/
-    numglyphs = msGetNumGlyphs(text);
-    numlines = (numglyphs-1) / maxlength + 1; /*count total number of lines needed
-                                            after splitting*/
-    if(numlines>1) {
-      char *newtext = msSmallMalloc(strlen(text)+numlines+1);
-      char *newtextptr = newtext;
-      char *textptr = text;
-      int glyphlen = 0, num_cur_glyph = 0;
-      while((glyphlen = msGetNextGlyph((const char**)&textptr,newtextptr))>0) {
-        num_cur_glyph++;
-        newtextptr += glyphlen;
-        if(num_cur_glyph%maxlength == 0 && num_cur_glyph != numglyphs) {
-          /*we're at a split location, insert a newline*/
-          *newtextptr = '\n';
-          newtextptr++;
-        }
-      }
-      free(text);
-      return newtext;
-    } else {
-      /*no splitting needed, return the original*/
-      return text;
-    }
-  }
-}
 
 void initTextPath(textPathObj *ts) {
   memset(ts,0,sizeof(*ts));
@@ -173,7 +76,7 @@ int msComputeTextPath(mapObj *map, textSymbolObj *ts) {
   tgret->line_height = ceil(tgret->glyph_size * 1.33);
   return msLayoutTextSymbol(map,ts,tgret);
 }
- 
+
 void initTextSymbol(textSymbolObj *ts) {
   memset(ts,0,sizeof(*ts));
 }
@@ -292,7 +195,7 @@ int msAddLabelGroup(mapObj *map, imageObj *image, layerObj* layer, int classinde
   classPtr = layer->class[classindex];
 
   if(classPtr->numlabels == 0) return MS_SUCCESS; /* not an error just nothing to do */
-  
+
   /* check that the label intersects the layer mask */
   if(layerPtr->mask) {
     int maskLayerIdx = msGetLayerIndex(map,layerPtr->mask);
@@ -308,7 +211,7 @@ int msAddLabelGroup(mapObj *map, imageObj *image, layerObj* layer, int classinde
       x = MS_NINT(point->x);
       y = MS_NINT(point->y);
       /* Using label repeatdistance, we might have a point with x/y below 0. See #4764 */
-      if (x >= 0 && x < rb.width && y >= 0 && y < rb.height) {      
+      if (x >= 0 && x < rb.width && y >= 0 && y < rb.height) {
         assert(rb.type == MS_BUFFER_BYTE_RGBA);
         alphapixptr = rb.data.rgba.a+rb.data.rgba.row_step*y + rb.data.rgba.pixel_step*x;
         if(!*alphapixptr) {
@@ -324,9 +227,9 @@ int msAddLabelGroup(mapObj *map, imageObj *image, layerObj* layer, int classinde
       return (MS_FAILURE);
     }
   }
-  
+
   textsymbols = msSmallMalloc(classPtr->numlabels * sizeof(textSymbolObj*));
-  
+
   for(l=0; l<classPtr->numlabels; l++) {
     labelObj *lbl = classPtr->labels[l];
     char *annotext;
@@ -346,10 +249,13 @@ int msAddLabelGroup(mapObj *map, imageObj *image, layerObj* layer, int classinde
     ts = msSmallMalloc(sizeof(textSymbolObj));
     initTextSymbol(ts);
     msPopulateTextSymbolForLabelAndString(ts,lbl,annotext,layerPtr->scalefactor,image->resolutionfactor, 1);
-  
+
     if(annotext && *annotext && lbl->autominfeaturesize && featuresize > 0) {
-      if(UNLIKELY(MS_FAILURE == msComputeTextPath(map,ts)))
+      if(UNLIKELY(MS_FAILURE == msComputeTextPath(map,ts))) {
+        freeTextSymbol(ts);
+        free(ts);
         return MS_FAILURE;
+      }
       if(featuresize < (ts->textpath->bounds.bbox.maxx - ts->textpath->bounds.bbox.minx)) {
         /* feature is too big to be drawn, skip it */
         freeTextSymbol(ts);
@@ -360,12 +266,12 @@ int msAddLabelGroup(mapObj *map, imageObj *image, layerObj* layer, int classinde
     textsymbols[numtextsymbols] = ts;
     numtextsymbols++;
   }
-  
+
   if(numtextsymbols == 0) {
     free(textsymbols);
     return MS_SUCCESS;
   }
-  
+
   /* Validate label priority value and get ref on label cache for it */
   priority = classPtr->labels[0]->priority; /* take priority from the first label */
   if (priority < 1)
@@ -439,10 +345,10 @@ int msAddLabel(mapObj *map, imageObj *image, labelObj *label, int layerindex, in
 
   layerPtr=GET_LAYER(map,layerindex);
   assert(layerPtr);
-  
+
   assert(classindex < layerPtr->numclasses);
   classPtr = layerPtr->class[classindex];
-  
+
   assert(label);
 
   if(ts)
@@ -508,7 +414,7 @@ int msAddLabel(mapObj *map, imageObj *image, labelObj *label, int layerindex, in
         for (i = 0; i < ts->textpath->numglyphs; i++) {
           int x = MS_NINT(ts->textpath->glyphs[i].pnt.x);
           int y = MS_NINT(ts->textpath->glyphs[i].pnt.y);
-          if (x >= 0 && x < rb.width && y >= 0 && y < rb.height) {          
+          if (x >= 0 && x < rb.width && y >= 0 && y < rb.height) {
             alphapixptr = rb.data.rgba.a + rb.data.rgba.row_step * y + rb.data.rgba.pixel_step*x;
             if (!*alphapixptr) {
               freeTextSymbol(ts);
@@ -534,7 +440,7 @@ int msAddLabel(mapObj *map, imageObj *image, labelObj *label, int layerindex, in
     initTextSymbol(ts);
     msPopulateTextSymbolForLabelAndString(ts,label,annotext,layerPtr->scalefactor,image->resolutionfactor, 1);
   }
-  
+
   if(annotext && label->autominfeaturesize && featuresize > 0) {
     if(!ts->textpath) {
       if(UNLIKELY(MS_FAILURE == msComputeTextPath(map,ts)))
@@ -1096,7 +1002,7 @@ int intersectLabelPolygons(lineObj *l1, rectObj *r1, lineObj *l2, rectObj *r2)
   pointObj *point;
   lineObj *p1,*p2,sp1,sp2;
   pointObj pnts1[5],pnts2[5];
-  
+
 
   /* STEP 0: check bounding boxes */
   if(!msRectOverlap(r1,r2)) { /* from alans@wunderground.com */

@@ -45,6 +45,8 @@
 #  define safe_fseek fseek
 #endif
 
+static inline void IGUR_sizet(size_t ignored) { (void)ignored; }  /* Ignore GCC Unused Result */
+
 /************************************************************************/
 /*                             SfRealloc()                              */
 /*                                                                      */
@@ -199,7 +201,12 @@ DBFHandle msDBFOpen( const char * pszFilename, const char * pszAccess )
   /*  Read Table Header info                                              */
   /* -------------------------------------------------------------------- */
   pabyBuf = (uchar *) msSmallMalloc(500);
-  fread( pabyBuf, 32, 1, psDBF->fp );
+  if( fread( pabyBuf, 32, 1, psDBF->fp ) != 1 )
+  {
+    msFree(psDBF);
+    msFree(pabyBuf);
+    return( NULL );
+  }
 
   psDBF->nRecords = nRecords =
                       pabyBuf[4] + pabyBuf[5]*256 + pabyBuf[6]*256*256 + pabyBuf[7]*256*256*256;
@@ -218,7 +225,13 @@ DBFHandle msDBFOpen( const char * pszFilename, const char * pszAccess )
   psDBF->pszHeader = (char *) pabyBuf;
 
   fseek( psDBF->fp, 32, 0 );
-  fread( pabyBuf, nHeadLen, 1, psDBF->fp );
+  if( fread( pabyBuf, nHeadLen - 32, 1, psDBF->fp ) != 1 )
+  {
+    msFree(psDBF->pszCurrentRecord);
+    msFree(psDBF);
+    msFree(pabyBuf);
+    return( NULL );
+  }
 
   psDBF->panFieldOffset = (int *) msSmallMalloc(sizeof(int) * nFields);
   psDBF->panFieldSize = (int *) msSmallMalloc(sizeof(int) * nFields);
@@ -271,7 +284,7 @@ void  msDBFClose(DBFHandle psDBF)
     uchar   abyFileHeader[32];
 
     fseek( psDBF->fp, 0, 0 );
-    fread( abyFileHeader, 32, 1, psDBF->fp );
+    IGUR_sizet(fread( abyFileHeader, 32, 1, psDBF->fp ));
 
     abyFileHeader[1] = 95;      /* YY */
     abyFileHeader[2] = 7;     /* MM */
@@ -434,10 +447,7 @@ int msDBFAddField(DBFHandle psDBF, const char * pszFieldName, DBFFieldType eType
   for( i = 0; i < 32; i++ )
     pszFInfo[i] = '\0';
 
-  if( strlen(pszFieldName) < 10 )
-    strncpy( pszFInfo, pszFieldName, strlen(pszFieldName));
-  else
-    strncpy( pszFInfo, pszFieldName, 10);
+  strncpy( pszFInfo, pszFieldName, 10);
 
   pszFInfo[11] = psDBF->pachFieldType[psDBF->nFields-1];
 
@@ -524,7 +534,11 @@ static const char *msDBFReadAttribute(DBFHandle psDBF, int hEntity, int iField )
     nRecordOffset = psDBF->nRecordLength * hEntity + psDBF->nHeaderLength;
 
     safe_fseek( psDBF->fp, nRecordOffset, 0 );
-    fread( psDBF->pszCurrentRecord, psDBF->nRecordLength, 1, psDBF->fp );
+    if( fread( psDBF->pszCurrentRecord, psDBF->nRecordLength, 1, psDBF->fp ) != 1 )
+    {
+      msSetError(MS_DBFERR, "Cannot read record %d.", "msDBFReadAttribute()",hEntity );
+      return( NULL );
+    }
 
     psDBF->nCurrentRecord = hEntity;
   }
@@ -675,9 +689,9 @@ DBFFieldType msDBFGetFieldInfo( DBFHandle psDBF, int iField, char * pszFieldName
 static int msDBFWriteAttribute(DBFHandle psDBF, int hEntity, int iField, void * pValue )
 {
   unsigned int          nRecordOffset;
-  int  i, j;
+  int  i, len;
   uchar *pabyRec;
-  char  szSField[40], szFormat[12];
+  char  szSField[40];
 
   /* -------------------------------------------------------------------- */
   /*  Is this a valid record?             */
@@ -711,7 +725,8 @@ static int msDBFWriteAttribute(DBFHandle psDBF, int hEntity, int iField, void * 
     nRecordOffset = psDBF->nRecordLength * hEntity + psDBF->nHeaderLength;
 
     safe_fseek( psDBF->fp, nRecordOffset, 0 );
-    fread( psDBF->pszCurrentRecord, psDBF->nRecordLength, 1, psDBF->fp );
+    if( fread( psDBF->pszCurrentRecord, psDBF->nRecordLength, 1, psDBF->fp ) != 1 )
+      return MS_FALSE;
 
     psDBF->nCurrentRecord = hEntity;
   }
@@ -725,28 +740,14 @@ static int msDBFWriteAttribute(DBFHandle psDBF, int hEntity, int iField, void * 
     case 'D':
     case 'N':
     case 'F':
-      if( psDBF->panFieldDecimals[iField] == 0 ) {
-        snprintf( szFormat, sizeof(szFormat), "%%%dd", psDBF->panFieldSize[iField] );
-        snprintf(szSField, sizeof(szSField), szFormat, (int) *((double *) pValue) );
-        if( (int) strlen(szSField) > psDBF->panFieldSize[iField] )
-          szSField[psDBF->panFieldSize[iField]] = '\0';
-        strncpy((char *) (pabyRec+psDBF->panFieldOffset[iField]), szSField, strlen(szSField) );
-      } else {
-        snprintf( szFormat, sizeof(szFormat), "%%%d.%df", psDBF->panFieldSize[iField], psDBF->panFieldDecimals[iField] );
-        snprintf(szSField, sizeof(szSField), szFormat, *((double *) pValue) );
-        if( (int) strlen(szSField) > psDBF->panFieldSize[iField] )
-          szSField[psDBF->panFieldSize[iField]] = '\0';
-        strncpy((char *) (pabyRec+psDBF->panFieldOffset[iField]),  szSField, strlen(szSField) );
-      }
+      snprintf(szSField, sizeof(szSField), "%*.*f", psDBF->panFieldSize[iField], psDBF->panFieldDecimals[iField], *(double*) pValue); 
+      len = strlen((char *) szSField);
+      memcpy(pabyRec+psDBF->panFieldOffset[iField], szSField, MS_MIN(len, psDBF->panFieldSize[iField]));
       break;
 
     default:
-      if( (int) strlen((char *) pValue) > psDBF->panFieldSize[iField] )
-        j = psDBF->panFieldSize[iField];
-      else
-        j = strlen((char *) pValue);
-
-      strncpy((char *) (pabyRec+psDBF->panFieldOffset[iField]), (char *) pValue, j );
+      len = strlen((char *) pValue);
+      memcpy(pabyRec+psDBF->panFieldOffset[iField], pValue, MS_MIN(len, psDBF->panFieldSize[iField]));
       break;
   }
 

@@ -68,14 +68,52 @@ def get_mapfile_list( argv ):
     return map_files
 
 ###############################################################################
+# compare_version()
+# Returns 1 if a > b, 0 if a == b, -1 if a < b
+
+def compare_version(version_a, version_b):
+
+    a = version_a.split('.')
+    b = version_b.split('.')
+    while len(a) < 3:
+        a += [ '0' ]
+    while len(b) < 3:
+        b += [ '0' ]
+    a_x, a_y, a_z = int(a[0]), int(a[1]), int(a[2])
+    b_x, b_y, b_z = int(b[0]), int(b[1]), int(b[2])
+    if a_x > b_x:
+        return 1
+    if a_x < b_x:
+        return -1
+    if a_y > b_y:
+        return 1
+    if a_y < b_y:
+        return -1
+    if a_z > b_z:
+        return 1
+    if a_z < b_z:
+        return -1
+    return 0
+
+###############################################################################
 # has_requires()
 
-def has_requires( version_info, requires_list ):
+def has_requires( version_info, gdal_version, requires_list ):
 
     for item in requires_list:
-        if version_info.find( item ) == -1:
+        if item.startswith('GDAL>='):
+            if gdal_version is None:
+                return 0
+            if compare_version(gdal_version, item[len('GDAL>='):]) < 0:
+                return 0
+        elif item.startswith('GDAL=='):
+            if gdal_version is None:
+                return 0
+            if compare_version(gdal_version, item[len('GDAL=='):]) != 0:
+                return 0
+        elif version_info.find( item ) == -1:
             return 0
-        
+
     return 1
 
 ###############################################################################
@@ -408,6 +446,28 @@ def crlf( filename ):
         else:
             f.write(newdata)
         f.close()
+
+###############################################################################
+def get_gdal_version():
+
+    # First try with GDAL Python bindings, otherwise with gdalinfo binary
+    try:
+        from osgeo import gdal
+        gdal_version = gdal.VersionInfo('VERSION_INFO')
+    except:
+        gdal_version = os.popen( 'gdalinfo --version').read()
+
+    # Parse something like "GDAL x.y.zdev, released..." to extract "x.y.z"
+    if gdal_version.startswith('GDAL '):
+        gdal_version = gdal_version[len('GDAL '):]
+        pos = gdal_version.find('dev')
+        if pos >= 0:
+            return gdal_version[0:pos]
+        pos = gdal_version.find(',')
+        if pos >= 0:
+            return gdal_version[0:pos]
+    return None
+
 ###############################################################################
 # run_tests()
 
@@ -421,6 +481,8 @@ def run_tests( argv ):
     keep_pass = 0
     valgrind = 0 
     valgrind_log = ''
+    run_under_asan = False
+    asan_log = ''
     shp2img = 'shp2img'
     renderer = None
     verbose = 0
@@ -429,6 +491,7 @@ def run_tests( argv ):
     validate_xml = True
     skiparg = False
     valgrind_non_empty_count = 0
+    asan_non_empty_count = 0
 
     ###########################################################################
     # Process arguments.
@@ -444,6 +507,8 @@ def run_tests( argv ):
             keep_pass = 1
         elif argv[i] == '-valgrind':
             valgrind = 1
+        elif argv[i] == '-run_under_asan':
+            run_under_asan = True
         elif argv[i] == '-strict':
             strict = 1
         elif argv[i] == '-renderer':
@@ -459,7 +524,7 @@ def run_tests( argv ):
             pass
         else:
             print( 'Unrecognised argument: %s' % argv[i] )
-            print( 'Usage: run_test.py [-v] [-keep] [-valgrind] [-strict]\n' + 
+            print( 'Usage: run_test.py [-v] [-keep] [-valgrind|-run_under_asan] [-strict]\n' + 
                    '                   [-shp2img <file>] [-renderer <name>]\n' +
                    '                   [mapfilename]*' )
             sys.exit( 1 )
@@ -473,12 +538,15 @@ def run_tests( argv ):
     # Get version info.
     version_info = os.popen( shp2img + ' -v' ).read()
     print('version = %s' % version_info)
-    
+
+    gdal_version = get_gdal_version()
+    #print('GDAL version = %s' % gdal_version)
+
     ###########################################################################
     # Check directory wide requirements.
     try:
         (runparms_list, requires_list) = read_test_directives( 'all_require.txt' )
-        if not has_requires( version_info, requires_list ):
+        if not has_requires( version_info, gdal_version, requires_list ):
             print('Some or all of the following requirements for this directory of tests\nare not available:')
             print(requires_list)
             return
@@ -511,7 +579,7 @@ def run_tests( argv ):
                 else:
                    runparms_list[i] = ("%s.%s%s"%(resultbase,renderer,resultext),runparms_list[i][1])
 
-        if not has_requires( version_info, requires_list ):
+        if not has_requires( version_info, gdal_version, requires_list ):
             if not quiet:
                 print('    missing some or all of required components, skip.')
             else:
@@ -610,6 +678,10 @@ def run_tests( argv ):
                   command = 'valgrind --tool=memcheck -q --suppressions=../valgrind-suppressions.txt --leak-check=full --show-reachable=yes %s 2>%s'%(command, valgrind_log)
                 else:
                   command = 'echo "' + post + '" | valgrind --tool=memcheck -q --suppressions=../valgrind-suppressions.txt --leak-check=full --show-reachable=yes %s 2>%s'%(command, valgrind_log)
+            elif run_under_asan:
+                asan_log = 'result/' + out_file + ".asan.txt"
+                command = command.strip()
+                command += " 2>%s" % asan_log
 
             if verbose:
                 print('')
@@ -642,6 +714,22 @@ def run_tests( argv ):
                     valgrind_non_empty_count = valgrind_non_empty_count + 1
                     if not quiet:
                         print('     Valgrind log non empty.')
+
+            elif run_under_asan:
+                if os.path.getsize(asan_log) == 0:
+                   os.remove( asan_log )
+                else:
+                    asan_log_content = open(asan_log, 'rt').read()
+                    # We get some unexplained crashes on Travis-CI
+                    if "Assertion `unscaled->face" in asan_log_content:
+                        os.remove( asan_log )
+                    elif 'AddressSanitizer' in asan_log_content or 'LeakSanitizer' in asan_log_content:
+                        asan_non_empty_count = asan_non_empty_count + 1
+                        if not quiet:
+                            print('     ASAN log non empty.')
+                    else:
+                        # some other standard error output
+                        os.remove( asan_log )
 
             apply_strip_items_file( 'result/'+out_file, strip_items )
                 
@@ -696,9 +784,8 @@ def run_tests( argv ):
                     print('%s: results dont match, TEST FAILED.'%(out_file))
 
             elif cmp == 'noresult':
-                f = open('result/'+out_file,"w")
-                print >>f, "Segmentation fault or other serious error"
-                f.close()
+                with open('result/' + out_file, 'w') as fh:
+                    fh.write("Segmentation fault or other serious error\n")
                 fail_count = fail_count + 1
                 noresult_count += 1
                 if not quiet:
@@ -724,6 +811,8 @@ def run_tests( argv ):
     print('%d test results initialized' % init_count)
     if valgrind:
         print('%d test have non-empty Valgrind log' % valgrind_non_empty_count)
+    elif run_under_asan:
+        print('%d test have non-empty ASAN log' % asan_non_empty_count)
 
     if noresult_count > 0:
         print('%d of failed tests produced *no* result! Serious Failure!' % noresult_count)

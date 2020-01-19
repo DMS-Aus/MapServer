@@ -56,7 +56,7 @@ enum {
 ** Structure to hold metadata taken from the image or image tile index
 */
 typedef struct {
-  const char *srs;
+  char *srs_epsg;
   char srs_urn[500];
   rectObj extent, llextent;
   double geotransform[6];
@@ -97,10 +97,18 @@ int msWCSException(mapObj *map, const char *code, const char *locator,
                    const char *version);
 int msWCSIsLayerSupported(layerObj *layer);
 int msWCSGetCoverageMetadata( layerObj *layer, coverageMetadataObj *cm );
+void msWCSFreeCoverageMetadata(coverageMetadataObj *cm);
 void msWCSSetDefaultBandsRangeSetInfo( wcsParamsObj *params,
                                        coverageMetadataObj *cm,
                                        layerObj *lp );
 const char *msWCSGetRequestParameter(cgiRequestObj *request, char *name);
+void msWCSApplyLayerCreationOptions(layerObj* lp,
+                                    outputFormatObj* format,
+                                    const char* bandlist);
+void msWCSApplyDatasetMetadataAsCreationOptions(layerObj* lp,
+                                                outputFormatObj* format,
+                                                const char* bandlist,
+                                                void* hDSIn);
 
 /* -------------------------------------------------------------------- */
 /*      Some WCS 1.1 specific functions from mapwcs11.c                 */
@@ -168,6 +176,7 @@ typedef struct {
   char *request;      /* GetCapabilities|DescribeCoverage|GetCoverage */
   char *service;      /* MUST be WCS */
   char **accept_versions; /* NULL terminated list of Accepted versions */
+  char **accept_languages; /* NULL terminated list of Accepted versions */
   char **sections;    /* NULL terminated list of GetCapabilities sections */
   char *updatesequence; /* GetCapabilities updatesequence */
   char **ids;         /* NULL terminated list of coverages (in the case of a GetCoverage there will only be 1) */
@@ -210,7 +219,7 @@ typedef wcs20rasterbandMetadataObj * wcs20rasterbandMetadataObjPtr;
 
 typedef struct {
   char *native_format;    /* mime type of the native format */
-  const char *srs;
+  char *srs_epsg;
   char srs_uri[200];
   rectObj extent;
   double geotransform[6];

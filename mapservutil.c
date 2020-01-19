@@ -43,8 +43,6 @@ static char *modeStrings[23] = {"BROWSE","ZOOMIN","ZOOMOUT","MAP","LEGEND","LEGE
                                 "INDEXQUERY","TILE","OWS", "WFS", "MAPLEGEND", "MAPLEGENDICON"
                                };
 
-
-
 int msCGIWriteLog(mapservObj *mapserv, int show_error)
 {
   FILE *stream;
@@ -1519,6 +1517,12 @@ int msCGIDispatchImageRequest(mapservObj *mapserv)
       break;
     case TILE:
       msTileSetExtent(mapserv);
+
+      if(!strcmp(MS_IMAGE_MIME_TYPE(mapserv->map->outputformat), "application/x-protobuf")) {
+        if((status = msMVTWriteTile(mapserv->map, mapserv->sendheaders)) != MS_SUCCESS) return MS_FAILURE;
+        return MS_SUCCESS;
+      }
+
       img = msTileDraw(mapserv);
       break;
     case LEGEND:
@@ -1666,6 +1670,7 @@ int msCGIDispatchLegendIconRequest(mapservObj *mapserv)
     status = MS_FAILURE;
     goto li_cleanup;
   }
+  img->map = mapserv->map;
 
   /* drop this reference to output format */
   msApplyOutputFormat(&format, NULL, MS_NOOVERRIDE, MS_NOOVERRIDE, MS_NOOVERRIDE);

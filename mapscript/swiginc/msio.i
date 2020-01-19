@@ -47,10 +47,8 @@ gdBuffer msIO_getStdoutBufferBytes(void);
 void msIO_installStdoutToFile(const char* filename);
 void msIO_setHeaderEnabled(int bFlag);
 
-#ifdef SWIGPYTHON
 %newobject msIO_getAndStripStdoutBufferMimeHeaders;
 hashTableObj* msIO_getAndStripStdoutBufferMimeHeaders(void);
-#endif
 
 %{
 

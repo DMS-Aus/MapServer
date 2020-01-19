@@ -51,11 +51,15 @@
       <Format>image/png</Format>
       <Format>image/jpeg</Format>
       <Format>image/png; mode=8bit</Format>
+      <Format>image/vnd.jpeg-png</Format>
+      <Format>image/vnd.jpeg-png8</Format>
       <Format>application/x-pdf</Format>
       <Format>image/svg+xml</Format>
       <Format>image/tiff</Format>
       <Format>application/vnd.google-earth.kml+xml</Format>
       <Format>application/vnd.google-earth.kmz</Format>
+      <Format>application/x-protobuf</Format>
+      <Format>application/json</Format>
       <DCPType>
         <HTTP>
           <Get><OnlineResource xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="http://www.geodaten-mv.de/dienste/inspirevs_test?language=ger&amp;"/></Get>
@@ -92,7 +96,7 @@
     <inspire_common:ResponseLanguage><inspire_common:Language>ger</inspire_common:Language></inspire_common:ResponseLanguage>
   </inspire_vs:ExtendedCapabilities>
   </VendorSpecificCapabilities>
-  <Layer>
+  <Layer queryable="1">
     <Name>TN</Name>
     <Title>Verkehrsnetze: Straße und Schiene</Title>
     <Abstract>Beispiele aus der Datenspezifikation Transportnetze</Abstract>
@@ -161,7 +165,7 @@
           <OnlineResource xmlns:xlink="http://www.w3.org/1999/xlink" xlink:type="simple" xlink:href="http://www.geodaten-mv.de/dienste/inspirevs_test?language=ger&amp;version=1.1.1&amp;service=WMS&amp;request=GetLegendGraphic&amp;layer=TN&amp;format=image/png&amp;STYLE=inspire_common:DEFAULT"/>
        </LegendURL>
     </Style>
-    <Layer queryable="0" opaque="0" cascaded="0">
+    <Layer queryable="1" opaque="0" cascaded="0">
         <Name>TN.CommonTransportElements</Name>
         <Title>TN.CommonTransportElements</Title>
         <Abstract>Nicht verfügbar</Abstract>
@@ -374,7 +378,7 @@
         </Style>
       </Layer>
     </Layer>
-    <Layer queryable="0" opaque="0" cascaded="0">
+    <Layer queryable="1" opaque="0" cascaded="0">
         <Name>TN.RoadTransportNetwork</Name>
         <Title>TN.RoadTransportNetwork</Title>
         <Abstract>Nicht verfügbar</Abstract>
@@ -630,7 +634,7 @@
         </Style>
       </Layer>
     </Layer>
-    <Layer queryable="0" opaque="0" cascaded="0">
+    <Layer queryable="1" opaque="0" cascaded="0">
         <Name>TN.RailTransportNetwork</Name>
         <Title>TN.RailTransportNetwork</Title>
         <Abstract>Nicht verfügbar</Abstract>

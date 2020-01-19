@@ -221,7 +221,7 @@ face_element* msGetFontFace(char *key, fontSetObj *fontset) {
 #endif
   UT_HASH_FIND_STR(cache->face_cache,key,fc);
   if(!fc) {
-    char *fontfile = NULL;
+    const char *fontfile = NULL;
     fc = msSmallCalloc(1,sizeof(face_element));
     if(fontset && strcmp(key,MS_DEFAULT_FONT_KEY)) {
       fontfile = msLookupHashTable(&(fontset->fonts),key);
@@ -336,4 +336,12 @@ outline_element* msGetGlyphOutline(face_element *face, glyph_element *glyph) {
     msReleaseLock(TLOCK_TTF);
 #endif
   return oc;
+}
+
+int msIsGlyphASpace(glyphObj *glyph) {
+  /* space or tab, for now */
+  unsigned int space,tab;
+  space = msGetGlyphIndex(glyph->face,0x20);
+  tab = msGetGlyphIndex(glyph->face,0x9);
+  return glyph->glyph->key.codepoint == space || glyph->glyph->key.codepoint == tab;
 }

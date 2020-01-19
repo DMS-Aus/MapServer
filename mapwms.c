@@ -313,6 +313,175 @@ int msWMSApplyTime(mapObj *map, int version, char *time, char *wms_exception_for
 }
 
 /*
+** Apply the FILTER parameter to layers (RFC118)
+*/
+int msWMSApplyFilter(mapObj *map, int version, const char *filter,
+		     int def_srs_needs_axis_swap, char *wms_exception_format)
+{
+  int i=0, numlayers;
+  int numfilters=0, curfilter=0;
+  char **paszFilters = NULL;
+  FilterEncodingNode *psNode = NULL;
+
+  // Empty filter should be ignored
+  if (!filter || strlen(filter) == 0)
+    return MS_SUCCESS;
+
+  if (!map)
+    return MS_FAILURE;  
+
+  /* Count number of requested layers 
+   * Only layers with STATUS ON were in the LAYERS request param.
+   * Layers with STATUS DEFAULT were set in the mapfile and are
+   * not expected to have a corresponding filter in the request
+   */
+   for(i=0, numlayers=0; i<map->numlayers; i++) {
+     layerObj *lp=NULL;
+
+     if(map->layerorder[i] != -1) {
+       lp = (GET_LAYER(map,  map->layerorder[i]));
+       if (lp->status == MS_ON)
+	 numlayers++;
+     }
+   }
+   
+  /* -------------------------------------------------------------------- */
+  /*      Parse the Filter parameter. If there are several Filter         */
+  /*      parameters, each Filter is inside parentheses.                  */
+  /* -------------------------------------------------------------------- */
+  numfilters = 0;
+  if (filter[0] == '(') {
+    paszFilters = FLTSplitFilters(filter, &numfilters);
+
+    if ( paszFilters && numfilters > 0 && numlayers != numfilters ) {
+      msFreeCharArray(paszFilters, numfilters);
+      paszFilters = NULL;
+    }
+  } else if (numlayers == 1) {
+    numfilters=1;
+    paszFilters = (char **)msSmallMalloc(sizeof(char *)*numfilters);
+    paszFilters[0] = msStrdup(filter);
+  }
+
+  if (numlayers != numfilters) {
+    msSetError(MS_WMSERR, "Wrong number of filter elements, one filter must be specified for each requested layer.",
+	       "msWMSApplyFilter" );
+    msFreeCharArray(paszFilters, numfilters);
+    return msWMSException(map, version, "InvalidParameterValue", wms_exception_format);
+  }
+
+  /* We're good to go. Apply each filter to the corresponding layer */
+  for(i=0, curfilter=0; i<map->numlayers && curfilter<numfilters; i++) {
+    layerObj *lp=NULL;
+
+    if(map->layerorder[i] != -1)
+      lp = (GET_LAYER(map,  map->layerorder[i]));
+
+    /* Only layers with STATUS ON were in the LAYERS request param.*/
+    if (lp == NULL || lp->status != MS_ON)
+      continue;
+
+    /* Skip empty filters */
+    if (paszFilters[curfilter][0] == '\0') {
+      curfilter++;
+      continue;
+    }
+    
+    /* Force setting a template to enable query. */
+    if (lp->template == NULL)
+      lp->template = msStrdup("ttt.html");
+
+    /* Parse filter */
+    psNode = FLTParseFilterEncoding(paszFilters[curfilter]);
+    if (!psNode) {
+      msSetError(MS_WMSERR,
+		 "Invalid or Unsupported FILTER : %s",
+		 "msWMSApplyFilter()", paszFilters[curfilter]);
+      msFreeCharArray(paszFilters, numfilters);
+      return msWMSException(map, version, "InvalidParameterValue", wms_exception_format);
+    }
+
+    /* For WMS 1.3 and up, we may need to swap the axis of bbox and geometry
+     * elements inside the filter(s)
+     */
+    if (version >= OWS_1_3_0)
+      FLTDoAxisSwappingIfNecessary(psNode, def_srs_needs_axis_swap);
+
+#ifdef do_we_need_this
+    FLTProcessPropertyIsNull(psNode, map, lp->index);
+
+    /*preparse the filter for gml aliases*/
+    FLTPreParseFilterForAliasAndGroup(psNode, map, lp->index, "G");
+
+    /* Check that FeatureId filters are consistent with the active layer */
+    if( FLTCheckFeatureIdFilters(psNode, map, lp->index) == MS_FAILURE)
+      {
+        FLTFreeFilterEncodingNode( psNode );
+        return msWFSException(map, "mapserv", MS_OWS_ERROR_NO_APPLICABLE_CODE, paramsObj->pszVersion);
+      }
+
+    /* FIXME?: could probably apply to WFS 1.1 too */
+    if( nWFSVersion >= OWS_2_0_0 )
+      {
+	int nEvaluation;
+
+        if( FLTCheckInvalidOperand(psNode) == MS_FAILURE)
+        {
+            FLTFreeFilterEncodingNode( psNode );
+            msFreeCharArray(paszFilters, numfilters);
+            return msWFSException(map, "filter", MS_WFS_ERROR_OPERATION_PROCESSING_FAILED, paramsObj->pszVersion);
+        }
+
+        if( FLTCheckInvalidProperty(psNode, map, lp->index) == MS_FAILURE)
+        {
+            FLTFreeFilterEncodingNode( psNode );
+            msFreeCharArray(paszFilters, numfilters);
+            return msWFSException(map, "filter", MS_OWS_ERROR_INVALID_PARAMETER_VALUE, paramsObj->pszVersion);
+        }
+
+        psNode = FLTSimplify(psNode, &nEvaluation);
+        if( psNode == NULL )
+        {
+            FLTFreeFilterEncodingNode( psNode );
+            msFreeCharArray(paszFilters, numfilters);
+            if( nEvaluation == 1 ) {
+                /* return full layer */
+                return msWFSRunBasicGetFeature(map, lp, paramsObj, nWFSVersion);
+            }
+            else {
+                /* return empty result set */
+                return MS_SUCCESS;
+            }
+        }
+
+      }
+    
+#endif
+
+    /* Apply filter to this layer */
+    if( FLTApplyFilterToLayer(psNode, map, lp->index) != MS_SUCCESS ) {
+      errorObj* ms_error = msGetErrorObj();
+
+      if(ms_error->code != MS_NOTFOUND) {
+	msSetError(MS_WMSERR, "FLTApplyFilterToLayer() failed", "msWMSApplyFilter()");
+	FLTFreeFilterEncodingNode( psNode );
+        msFreeCharArray(paszFilters, numfilters);
+	return msWMSException(map, version, "InvalidParameterValue", wms_exception_format);
+      }
+    }
+
+    FLTFreeFilterEncodingNode( psNode );
+
+    curfilter++;
+
+  }/* for */
+
+    msFreeCharArray(paszFilters, numfilters);
+
+    return MS_SUCCESS;
+}
+
+/*
 ** msWMSPrepareNestedGroups()
 **
 ** purpose: Parse WMS_LAYER_GROUP settings into arrays
@@ -803,7 +972,6 @@ int msWMSLoadGetMapParams(mapObj *map, int nVersion,
   char epsgbuf[100];
   char srsbuffer[100];
   int epsgvalid = MS_FALSE;
-  const char *projstring;
   int timerequest = 0;
   char *stime = NULL;
   char **tokens=NULL;
@@ -820,9 +988,11 @@ int msWMSLoadGetMapParams(mapObj *map, int nVersion,
   const char *sldenabled=NULL;
   char *sld_url=NULL, *sld_body=NULL;
 
+  int need_axis_swap = MS_FALSE;
+  const char *filter = NULL;
+
   epsgbuf[0]='\0';
   srsbuffer[0]='\0';
-
 
   /* Some of the getMap parameters are actually required depending on the */
   /* request, but for now we assume all are optional and the map file */
@@ -863,9 +1033,6 @@ int msWMSLoadGetMapParams(mapObj *map, int nVersion,
     if (strcasecmp(names[i], "REQUEST") == 0) {
       request = values[i];
     }
-
-
-
 
     if (strcasecmp(names[i], "LAYERS") == 0) {
       int  j, k, iLayer, *layerOrder;
@@ -982,7 +1149,6 @@ int msWMSLoadGetMapParams(mapObj *map, int nVersion,
            used with msLoadProjection and that does alreay the job */
         /* snprintf(srsbuffer, 100, "init=epsg:%.20s", values[i]+5); */
 
-
         snprintf(srsbuffer, sizeof(srsbuffer), "EPSG:%.20s",values[i]+5);
         snprintf(epsgbuf, sizeof(epsgbuf), "EPSG:%.20s",values[i]+5);
 
@@ -993,7 +1159,6 @@ int msWMSLoadGetMapParams(mapObj *map, int nVersion,
             srsbuffer[strlen(srsbuffer)-1] = '\0';
           if (epsgbuf[strlen(epsgbuf)-1] == ',')
             epsgbuf[strlen(epsgbuf)-1] = '\0';
-
         }
 
         /* we need to wait until all params are read before */
@@ -1091,7 +1256,7 @@ int msWMSLoadGetMapParams(mapObj *map, int nVersion,
         } else {
           format = msSelectOutputFormat( map, values[i] );
           if( format == NULL ||
-              (strncasecmp(format->driver, "GD/", 3) != 0 &&
+              (strncasecmp(format->driver, "MVT", 3) != 0 &&
                strncasecmp(format->driver, "GDAL/", 5) != 0 &&
                strncasecmp(format->driver, "AGG/", 4) != 0 &&
                strncasecmp(format->driver, "UTFGRID", 7) != 0 &&
@@ -1135,6 +1300,10 @@ int msWMSLoadGetMapParams(mapObj *map, int nVersion,
     else if (strcasecmp(names[i], "BBOX_PIXEL_IS_POINT") == 0) {
       bbox_pixel_is_point = (strcasecmp(values[i], "TRUE") == 0);
     }
+    /* Vendor-specific FILTER, added in RFC-118 */
+    else if (strcasecmp(names[i], "FILTER") == 0) {
+      filter = values[i];
+    }
   }
 
   /*validate the exception format WMS 1.3.0 section 7.3.3.11*/
@@ -1160,7 +1329,8 @@ int msWMSLoadGetMapParams(mapObj *map, int nVersion,
     /*try to adjust the axes if necessary*/
     if (strlen(srsbuffer) > 1) {
       msInitProjection(&proj);
-      if (msLoadProjectionStringEPSG(&proj, (char *)srsbuffer) == 0) {
+      if (msLoadProjectionStringEPSG(&proj, (char *)srsbuffer) == 0 &&
+	  (need_axis_swap = msIsAxisInvertedProj(&proj) ) ) {
         msAxisNormalizePoints( &proj, 1, &rect.minx, &rect.miny );
         msAxisNormalizePoints( &proj, 1, &rect.maxx, &rect.maxy );
       }
@@ -1323,9 +1493,10 @@ this request. Check wms/ows_enable_request settings.",
   ** validate all layers requested.
   */
   if (epsgbuf[0] && epsgbuf[1]) { /*at least 2 chars*/
+    char *projstring;
     epsgvalid = MS_FALSE;
-    projstring = msOWSGetEPSGProj(&(map->projection), &(map->web.metadata),
-                                  "MO", MS_FALSE);
+    msOWSGetEPSGProj(&(map->projection), &(map->web.metadata),
+                                  "MO", MS_FALSE, &projstring);
     if (projstring) {
       tokens = msStringSplit(projstring, ' ', &n);
       if (tokens && n > 0) {
@@ -1337,14 +1508,15 @@ this request. Check wms/ows_enable_request settings.",
         }
         msFreeCharArray(tokens, n);
       }
+      msFree(projstring);
     }
     if (epsgvalid == MS_FALSE) {
       for (i=0; i<map->numlayers; i++) {
         epsgvalid = MS_FALSE;
         if (GET_LAYER(map, i)->status == MS_ON) {
-          projstring = msOWSGetEPSGProj(&(GET_LAYER(map, i)->projection),
+          msOWSGetEPSGProj(&(GET_LAYER(map, i)->projection),
                                         &(GET_LAYER(map, i)->metadata),
-                                        "MO", MS_FALSE);
+                                        "MO", MS_FALSE, &projstring);
           if (projstring) {
             tokens = msStringSplit(projstring, ' ', &n);
             if (tokens && n > 0) {
@@ -1356,6 +1528,7 @@ this request. Check wms/ows_enable_request settings.",
               }
               msFreeCharArray(tokens, n);
             }
+            msFree(projstring);
           }
           if (epsgvalid == MS_FALSE) {
             if (nVersion >= OWS_1_3_0) {
@@ -1477,7 +1650,6 @@ this request. Check wms/ows_enable_request settings.",
     char *pszLayerNames = NULL;
     nLayersBefore = map->numlayers;
 
-
     /* -------------------------------------------------------------------- */
     /*      if LAYERS parameter was not given, set all layers to off        */
     /* -------------------------------------------------------------------- */
@@ -1487,7 +1659,6 @@ this request. Check wms/ows_enable_request settings.",
           GET_LAYER(map, j)->status = MS_OFF;
       }
     }
-
 
     /*apply sld if defined. This is done here so that bbox and srs are already applied*/
     if (sld_url) {
@@ -1539,6 +1710,7 @@ this request. Check wms/ows_enable_request settings.",
     msFree(pszLayerNames);
 
   }
+
   /* Validate Styles :
   ** MapServer advertize styles through th group setting in a class object.
   ** If no styles are set MapServer expects to have empty values
@@ -1591,9 +1763,9 @@ this request. Check wms/ows_enable_request settings.",
                            map->numlayers);
                   if (psTmpLayer->name)
                     msFree(psTmpLayer->name);
-                  psTmpLayer->name = strdup(tmpId);
+                  psTmpLayer->name = msStrdup(tmpId);
                   msFree(layers[l]);
-                  layers[l] = strdup(tmpId);
+                  layers[l] = msStrdup(tmpId);
                   msInsertLayer(map, psTmpLayer, -1);
                   bLayerInserted =MS_TRUE;
                   /* layer was copied, we need to decrement its refcount */
@@ -1712,6 +1884,22 @@ this request. Check wms/ows_enable_request settings.",
       return msWMSException(map, nVersion, "MissingParameterValue", wms_exception_format);
     }
 
+  }
+
+  /*
+  ** Apply vendor-specific filter if specified
+  */
+  if (filter) {
+    if (sld_url || sld_body) {
+      msSetError(MS_WMSERR,
+                 "Vendor-specific FILTER parameter cannot be used with SLD or SLD_BODY.",
+                 "msWMSLoadGetMapParams()");
+      return msWMSException(map, nVersion, NULL, wms_exception_format);
+    }
+
+    if (msWMSApplyFilter(map, nVersion, filter, need_axis_swap, wms_exception_format) == MS_FAILURE) {
+      return MS_FAILURE;/* msWMSException(map, nVersion, "InvalidFilterRequest"); */
+    }
   }
 
   return MS_SUCCESS;
@@ -2027,7 +2215,11 @@ void msWMSPrintKeywordlist(FILE *stream, const char *tabspace,
 /*
 ** msDumpLayer()
 */
-int msDumpLayer(mapObj *map, layerObj *lp, int nVersion, const char *script_url_encoded, const char *indent, const char *validated_language, int grouplayer)
+static
+int msDumpLayer(mapObj *map, layerObj *lp, int nVersion,
+                const char *script_url_encoded, const char *indent,
+                const char *validated_language, int grouplayer,
+                int hasQueryableSubLayers)
 {
   rectObj ext;
   const char *value;
@@ -2039,6 +2231,7 @@ int msDumpLayer(mapObj *map, layerObj *lp, int nVersion, const char *script_url_
   char szVersionBuf[OWS_VERSION_MAXLEN];
   size_t bufferSize = 0;
   const char *pszDimensionlist=NULL;
+  char *pszMapEPSG,*pszLayerEPSG;
 
   /* if the layer status is set to MS_DEFAULT, output a warning */
   if (lp->status == MS_DEFAULT)
@@ -2046,7 +2239,7 @@ int msDumpLayer(mapObj *map, layerObj *lp, int nVersion, const char *script_url_
 
   if (nVersion <= OWS_1_0_7) {
     msIO_printf("%s    <Layer queryable=\"%d\">\n",
-                indent, msIsLayerQueryable(lp));
+                indent, hasQueryableSubLayers || msIsLayerQueryable(lp));
   } else {
     /* 1.1.0 and later: opaque and cascaded are new. */
     int cascaded=0, opaque=0;
@@ -2056,7 +2249,7 @@ int msDumpLayer(mapObj *map, layerObj *lp, int nVersion, const char *script_url_
       cascaded = 1;
 
     msIO_printf("%s    <Layer queryable=\"%d\" opaque=\"%d\" cascaded=\"%d\">\n",
-                indent, msIsLayerQueryable(lp), opaque, cascaded);
+                indent, hasQueryableSubLayers || msIsLayerQueryable(lp), opaque, cascaded);
   }
 
   if (lp->name && strlen(lp->name) > 0 &&
@@ -2076,64 +2269,62 @@ int msDumpLayer(mapObj *map, layerObj *lp, int nVersion, const char *script_url_
 
   msWMSPrintKeywordlist(stdout, "        ", "keywordlist", &(lp->metadata), "MO", nVersion);
 
-  if (msOWSGetEPSGProj(&(map->projection),&(map->web.metadata),
-                       "MO", MS_FALSE) == NULL) {
+  msOWSGetEPSGProj(&(map->projection),&(map->web.metadata), "MO", MS_FALSE, &pszMapEPSG);
+  msOWSGetEPSGProj(&(lp->projection),&(lp->metadata), "MO", MS_FALSE, &pszLayerEPSG);
+  if(pszMapEPSG == NULL) {
     /* If map has no proj then every layer MUST have one or produce a warning */
     if (nVersion > OWS_1_1_0) {
       /* starting 1.1.1 SRS are given in individual tags */
-      if (nVersion >= OWS_1_3_0)
+      if (nVersion >= OWS_1_3_0) {
         msOWSPrintEncodeParamList(stdout, "(at least one of) "
                                   "MAP.PROJECTION, LAYER.PROJECTION "
                                   "or wms_srs metadata",
-                                  msOWSGetEPSGProj(&(lp->projection),
-                                      &(lp->metadata),
-                                      "MO", MS_FALSE),
+                                  pszLayerEPSG,
                                   OWS_WARN, ' ', NULL, NULL,
                                   "        <CRS>%s</CRS>\n", NULL);
-      else
+      }
+      else {
         msOWSPrintEncodeParamList(stdout, "(at least one of) "
                                   "MAP.PROJECTION, LAYER.PROJECTION "
                                   "or wms_srs metadata",
-                                  msOWSGetEPSGProj(&(lp->projection),
-                                      &(lp->metadata),
-                                      "MO", MS_FALSE),
+                                  pszLayerEPSG,
                                   OWS_WARN, ' ', NULL, NULL,
                                   "        <SRS>%s</SRS>\n", NULL);
-    } else
+      }
+    } else {
       msOWSPrintEncodeParam(stdout, "(at least one of) MAP.PROJECTION, "
                             "LAYER.PROJECTION or wms_srs metadata",
-                            msOWSGetEPSGProj(&(lp->projection),
-                                             &(lp->metadata), "MO", MS_FALSE),
+                            pszLayerEPSG,
                             OWS_WARN, "        <SRS>%s</SRS>\n", NULL);
+    }
   } else {
     /* No warning required in this case since there's at least a map proj. */
     if (nVersion > OWS_1_1_0) {
       /* starting 1.1.1 SRS are given in individual tags */
-      if (nVersion >=  OWS_1_3_0)
+      if (nVersion >=  OWS_1_3_0) {
         msOWSPrintEncodeParamList(stdout, "(at least one of) "
                                   "MAP.PROJECTION, LAYER.PROJECTION "
                                   "or wms_srs metadata",
-                                  msOWSGetEPSGProj(&(lp->projection),
-                                      &(lp->metadata),
-                                      "MO", MS_FALSE),
+                                  pszLayerEPSG,
                                   OWS_NOERR, ' ', NULL, NULL,
                                   "        <CRS>%s</CRS>\n", NULL);
-      else
+      } else {
         msOWSPrintEncodeParamList(stdout, "(at least one of) "
                                   "MAP.PROJECTION, LAYER.PROJECTION "
                                   "or wms_srs metadata",
-                                  msOWSGetEPSGProj(&(lp->projection),
-                                      &(lp->metadata),
-                                      "MO", MS_FALSE),
+                                  pszLayerEPSG,
                                   OWS_NOERR, ' ', NULL, NULL,
                                   "        <SRS>%s</SRS>\n", NULL);
-    } else
+      }
+    } else {
       msOWSPrintEncodeParam(stdout,
                             " LAYER.PROJECTION (or wms_srs metadata)",
-                            msOWSGetEPSGProj(&(lp->projection),
-                                             &(lp->metadata),"MO",MS_FALSE),
+                            pszLayerEPSG,
                             OWS_NOERR, "        <SRS>%s</SRS>\n", NULL);
+    }
   }
+  msFree(pszLayerEPSG);
+  msFree(pszMapEPSG);
 
   /* If layer has no proj set then use map->proj for bounding box. */
   if (msOWSGetLayerExtent(map, lp, "MO", &ext) == MS_SUCCESS) {
@@ -2258,7 +2449,10 @@ int msDumpLayer(mapObj *map, layerObj *lp, int nVersion, const char *script_url_
     msWMSPrintIdentifier(stdout, "        ", &(lp->metadata), "MO");
   }
 
-  if(nVersion >= OWS_1_1_0)
+  if(nVersion >= OWS_1_1_0) {
+    if (! msOWSLookupMetadata(&(lp->metadata), "MO", "metadataurl_href"))
+      msMetadataSetGetMetadataURL(lp, script_url_encoded);
+
     msOWSPrintURLType(stdout, &(lp->metadata), "MO", "metadataurl",
                       OWS_NOERR, NULL, "MetadataURL", " type=\"%s\"",
                       NULL, NULL, ">\n          <Format>%s</Format",
@@ -2267,6 +2461,7 @@ int msDumpLayer(mapObj *map, layerObj *lp, int nVersion, const char *script_url_
                       "xlink:type=\"simple\" xlink:href=\"%s\"/>\n        ",
                       MS_TRUE, MS_FALSE, MS_FALSE, MS_TRUE, MS_TRUE,
                       NULL, NULL, NULL, NULL, NULL, "        ");
+  }
 
   if(nVersion < OWS_1_1_0)
     msOWSPrintEncodeMetadata(stdout, &(lp->metadata), "MO", "dataurl_href",
@@ -2586,6 +2781,22 @@ int msWMSIsSubGroup(char** currentGroups, int currentLevel, char** otherGroups, 
   return MS_TRUE;
 }
 
+/*
+ * msWMSHasQueryableSubLayers
+ */
+static int msWMSHasQueryableSubLayers(mapObj* map, int index, int level,
+                                      char*** nestedGroups, int* numNestedGroups)
+{
+    int j;
+    for (j = index; j < map->numlayers; j++) {
+      if (msWMSIsSubGroup(nestedGroups[index], level, nestedGroups[j], numNestedGroups[j])) {
+          if( msIsLayerQueryable( GET_LAYER(map,j) ) )
+              return MS_TRUE;
+      }
+    }
+    return MS_FALSE;
+}
+
 /***********************************************************************************
  * msWMSPrintNestedGroups()                                                        *
  *                                                                                 *
@@ -2617,7 +2828,7 @@ void msWMSPrintNestedGroups(mapObj* map, int nVersion, char* pabLayerProcessed,
   if (numNestedGroups[index] <= level) { /* no more subgroups */
     if ((!pabLayerProcessed[index]) && (!isUsedInNestedGroup[index])) {
       /* we are at the deepest level of the group branchings, so add layer now. */
-      msDumpLayer(map, GET_LAYER(map, index), nVersion, script_url_encoded, indent, validated_language, MS_FALSE);
+      msDumpLayer(map, GET_LAYER(map, index), nVersion, script_url_encoded, indent, validated_language, MS_FALSE, MS_FALSE);
       pabLayerProcessed[index] = 1; /* done */
     }
   } else { /* not yet there, we have to deal with this group and possible subgroups and layers. */
@@ -2630,12 +2841,18 @@ void msWMSPrintNestedGroups(mapObj* map, int nVersion, char* pabLayerProcessed,
     /* Beginning of a new group... enclose the group in a layer block */
     if ( j < map->numlayers ) {
       if (!pabLayerProcessed[j]) {
-        msDumpLayer(map, GET_LAYER(map, j), nVersion, script_url_encoded, indent, validated_language, MS_TRUE);
+        msDumpLayer(map, GET_LAYER(map, j), nVersion, script_url_encoded,
+                    indent, validated_language, MS_TRUE,
+                    msWMSHasQueryableSubLayers(map, index, level,
+                            nestedGroups, numNestedGroups));
         pabLayerProcessed[j] = 1; /* done */
         groupAdded = 1;
       }
     } else {
-      msIO_printf("%s    <Layer>\n", indent);
+      msIO_printf("%s    <Layer%s>\n", indent,
+        msWMSHasQueryableSubLayers(map, index, level,
+                    nestedGroups, numNestedGroups) ? " queryable=\"1\"" : "");
+      msIO_printf("%s      <Name>%s</Name>\n", indent, nestedGroups[index][level]);
       msIO_printf("%s      <Title>%s</Title>\n", indent, nestedGroups[index][level]);
       groupAdded = 1;
     }
@@ -2685,12 +2902,14 @@ int msWMSGetCapabilities(mapObj *map, int nVersion, cgiRequestObj *req, owsReque
   const char *updatesequence=NULL;
   const char *sldenabled=NULL;
   const char *layerlimit=NULL;
+  const char *rootlayer_name=NULL;
   char *pszTmp=NULL;
   int i;
   const char *format_list=NULL;
   char **tokens = NULL;
   int numtokens = 0;
   char *validated_language = NULL;
+  char *pszMapEPSG;
 
   updatesequence = msOWSLookupMetadata(&(map->web.metadata), "MO", "updatesequence");
 
@@ -3090,7 +3309,24 @@ int msWMSGetCapabilities(mapObj *map, int nVersion, cgiRequestObj *req, owsReque
   if (ows_request->numlayers == 0) {
     msIO_fprintf(stdout, "  <!-- WARNING: No WMS layers are enabled. Check wms/ows_enable_request settings. -->\n");
   } else {
-    msIO_printf("  <Layer>\n");
+    int root_is_queryable = MS_FALSE;
+
+    rootlayer_name = msOWSLookupMetadata(&(map->web.metadata), "MO", "rootlayer_name");
+
+    /* Root layer is queryable if it has a valid name and at list one layer */
+    /* is queryable */
+    if( !rootlayer_name || strlen(rootlayer_name) > 0 ) {
+      int j;
+      for(j=0; j<map->numlayers; j++) {
+        layerObj* layer = GET_LAYER(map, j);
+        if( msIsLayerQueryable(layer) &&
+            msIntegerInArray(layer->index, ows_request->enabled_layers, ows_request->numlayers) ) {
+          root_is_queryable = MS_TRUE;
+          break;
+        }
+      }
+    }
+    msIO_printf("  <Layer%s>\n",root_is_queryable ? " queryable=\"1\"" : "");
 
     /* Layer Name is optional but title is mandatory. */
     if (map->name && strlen(map->name) > 0 &&
@@ -3098,8 +3334,18 @@ int msWMSGetCapabilities(mapObj *map, int nVersion, cgiRequestObj *req, owsReque
       msIO_fprintf(stdout, "<!-- WARNING: The layer name '%s' might contain spaces or "
                    "invalid characters or may start with a number. This could lead to potential problems. -->\n",
                    map->name);
-    msOWSPrintEncodeParam(stdout, "MAP.NAME", map->name, OWS_NOERR,
-                          "    <Name>%s</Name>\n", NULL);
+
+    if (rootlayer_name) {
+        if (strlen(rootlayer_name) > 0) {
+            msOWSPrintEncodeMetadata(stdout, &(map->web.metadata), "MO", "rootlayer_name",
+                                     OWS_NOERR, "    <Name>%s</Name>\n",
+                                     NULL);
+        }
+    }
+    else {
+        msOWSPrintEncodeParam(stdout, "MAP.NAME", map->name, OWS_NOERR,
+                              "    <Name>%s</Name>\n", NULL);
+    }
 
     if (msOWSLookupMetadataWithLanguage(&(map->web.metadata), "MO", "rootlayer_title", validated_language))
       msOWSPrintEncodeMetadata2(stdout, &(map->web.metadata), "MO", "rootlayer_title", OWS_WARN, "    <Title>%s</Title>\n", map->name, validated_language);
@@ -3123,33 +3369,31 @@ int msWMSGetCapabilities(mapObj *map, int nVersion, cgiRequestObj *req, owsReque
     /* According to normative comments in the 1.0.7 DTD, the root layer's SRS tag */
     /* is REQUIRED.  It also suggests that we use an empty SRS element if there */
     /* is no common SRS. */
+    msOWSGetEPSGProj(&(map->projection), &(map->web.metadata), "MO", MS_FALSE, &pszMapEPSG);
     if (nVersion > OWS_1_1_0) {
       /* starting 1.1.1 SRS are given in individual tags */
-      if (nVersion >= OWS_1_3_0)
+      if (nVersion >= OWS_1_3_0) {
         msOWSPrintEncodeParamList(stdout, "(at least one of) "
                                   "MAP.PROJECTION, LAYER.PROJECTION "
                                   "or wms_srs metadata",
-                                  msOWSGetEPSGProj(&(map->projection),
-                                      &(map->web.metadata),
-                                      "MO", MS_FALSE),
+                                  pszMapEPSG,
                                   OWS_WARN, ' ', NULL, NULL,
                                   "    <CRS>%s</CRS>\n", "");
-      else
+      } else {
         msOWSPrintEncodeParamList(stdout, "(at least one of) "
                                   "MAP.PROJECTION, LAYER.PROJECTION "
                                   "or wms_srs metadata",
-                                  msOWSGetEPSGProj(&(map->projection),
-                                      &(map->web.metadata),
-                                      "MO", MS_FALSE),
+                                  pszMapEPSG,
                                   OWS_WARN, ' ', NULL, NULL,
                                   "    <SRS>%s</SRS>\n", "");
-    } else
+      }
+    } else {
       /* If map has no proj then every layer MUST have one or produce a warning */
       msOWSPrintEncodeParam(stdout, "MAP.PROJECTION (or wms_srs metadata)",
-                            msOWSGetEPSGProj(&(map->projection),
-                                             &(map->web.metadata),
-                                             "MO", MS_FALSE),
+                            pszMapEPSG,
                             OWS_WARN, "    <SRS>%s</SRS>\n", "");
+    }
+    msFree(pszMapEPSG);
 
     if (nVersion >= OWS_1_3_0)
       msOWSPrintEX_GeographicBoundingBox(stdout, "    ", &(map->extent),
@@ -3347,12 +3591,24 @@ int msWMSGetCapabilities(mapObj *map, int nVersion, cgiRequestObj *req, owsReque
           /* Don't dump layer if it is used in wms_group_layer. */
           if (!isUsedInNestedGroup[i]) {
             /* This layer is not part of a group... dump it directly */
-            msDumpLayer(map, lp, nVersion, script_url_encoded, "", validated_language, MS_FALSE);
+            msDumpLayer(map, lp, nVersion, script_url_encoded, "", validated_language, MS_FALSE, MS_FALSE);
             pabLayerProcessed[i] = 1;
           }
         } else {
+          int group_is_queryable = MS_FALSE;
+          /* Group is queryable as soon as its member layers is. */
+          for(j=i; j<map->numlayers; j++) {
+            if (GET_LAYER(map, j)->group &&
+                strcmp(lp->group, GET_LAYER(map, j)->group) == 0 &&
+                msIntegerInArray(GET_LAYER(map, j)->index, ows_request->enabled_layers, ows_request->numlayers) &&
+                msIsLayerQueryable(GET_LAYER(map, j)) ) {
+                group_is_queryable = MS_TRUE;
+                break;
+            }
+          }
           /* Beginning of a new group... enclose the group in a layer block */
-          msIO_printf("    <Layer>\n");
+          msIO_printf("    <Layer%s>\n",
+                      group_is_queryable ? " queryable=\"1\"" : "");
 
           /* Layer Name is optional but title is mandatory. */
           if (lp->group &&  strlen(lp->group) > 0 &&
@@ -3469,6 +3725,8 @@ int msWMSGetCapabilities(mapObj *map, int nVersion, cgiRequestObj *req, owsReque
                     msFree(pszMimetype);
                   }
                 }
+
+                msFree(group_layers);
               }
               msIO_fprintf(stdout, "    </Style>\n");
               msFree(pszEncodedName);
@@ -3482,7 +3740,7 @@ int msWMSGetCapabilities(mapObj *map, int nVersion, cgiRequestObj *req, owsReque
                 GET_LAYER(map, j)->group &&
                 strcmp(lp->group, GET_LAYER(map, j)->group) == 0 &&
                 msIntegerInArray(GET_LAYER(map, j)->index, ows_request->enabled_layers, ows_request->numlayers)) {
-              msDumpLayer(map, (GET_LAYER(map, j)), nVersion, script_url_encoded, "  ", validated_language, MS_FALSE);
+              msDumpLayer(map, (GET_LAYER(map, j)), nVersion, script_url_encoded, "  ", validated_language, MS_FALSE, MS_FALSE);
               pabLayerProcessed[j] = 1;
             }
           }
@@ -3610,6 +3868,7 @@ int msWMSGetMap(mapObj *map, int nVersion, char **names, char **values, int nume
   imageObj *img;
   int i = 0;
   int sldrequested = MS_FALSE,  sldspatialfilter = MS_FALSE;
+  int drawquerymap = MS_FALSE;
   const char *http_max_age;
 
   /* __TODO__ msDrawMap() will try to adjust the extent of the map */
@@ -3636,6 +3895,15 @@ int msWMSGetMap(mapObj *map, int nVersion, char **names, char **values, int nume
         sldspatialfilter = MS_TRUE;
         break;
       }
+    }
+  }
+  /* If FILTER is passed then we'll render layers as querymap */
+  for (i=0; i<numentries; i++) {
+    if ((strcasecmp(names[i], "FILTER") == 0 && values[i] && strlen(values[i]) > 0)) {
+      drawquerymap = MS_TRUE;
+      map->querymap.status = MS_ON;
+      map->querymap.style = MS_SELECTED;
+      break;
     }
   }
 
@@ -3678,8 +3946,18 @@ int msWMSGetMap(mapObj *map, int nVersion, char **names, char **values, int nume
         msDrawLayer(map, GET_LAYER(map, i), img);
     }
 
-  } else
-    img = msDrawMap(map, MS_FALSE);
+  } else {
+
+    /* intercept requests for Mapbox vector tiles */
+    if(!strcmp(MS_IMAGE_MIME_TYPE(map->outputformat), "application/x-protobuf")) {
+      int status=0;
+      if((status = msMVTWriteTile(map, MS_TRUE)) != MS_SUCCESS) return MS_FAILURE;
+      return MS_SUCCESS;
+    }
+
+    img = msDrawMap(map, drawquerymap);
+  }
+
   if (img == NULL)
     return msWMSException(map, nVersion, NULL, wms_exception_format);
 
@@ -3694,6 +3972,7 @@ int msWMSGetMap(mapObj *map, int nVersion, char **names, char **values, int nume
     if(!strcmp(MS_IMAGE_MIME_TYPE(map->outputformat), "application/json")) {
       msIO_setHeader("Content-Type","application/json; charset=utf-8");
     } else {
+      msOutputFormatResolveFromImage( map, img );
       msIO_setHeader("Content-Type", "%s", MS_IMAGE_MIME_TYPE(map->outputformat));
     }
     msIO_sendHeaders();
@@ -3854,6 +4133,7 @@ int msWMSFeatureInfo(mapObj *map, int nVersion, char **names, char **values, int
     if(strcasecmp(names[i], "QUERY_LAYERS") == 0) {
       char **layers;
       int numlayers, j, k;
+      const char* rootlayer_name;
 
       query_layer = 1; /* flag set if QUERY_LAYERS is the request */
 
@@ -3863,27 +4143,48 @@ int msWMSFeatureInfo(mapObj *map, int nVersion, char **names, char **values, int
         return msWMSException(map, nVersion, "LayerNotDefined", wms_exception_format);
       }
 
-
-
       for(j=0; j<map->numlayers; j++) {
         /* Force all layers OFF by default */
         GET_LAYER(map, j)->status = MS_OFF;
-        for(k=0; k<numlayers; k++) {
-          if (((GET_LAYER(map, j)->name && strcasecmp(GET_LAYER(map, j)->name, layers[k]) == 0) ||
-               (map->name && strcasecmp(map->name, layers[k]) == 0) ||
-               (GET_LAYER(map, j)->group && strcasecmp(GET_LAYER(map, j)->group, layers[k]) == 0) ||
-               ((numNestedGroups[j] >0) && msStringInArray(layers[k], nestedGroups[j], numNestedGroups[j]))) &&
-              (msIntegerInArray(GET_LAYER(map, j)->index, ows_request->enabled_layers, ows_request->numlayers)) ) {
-            if (GET_LAYER(map, j)->connectiontype == MS_WMS) {
+      }
+
+      /* Special case for root layer */
+      rootlayer_name = msOWSLookupMetadata(&(map->web.metadata), "MO", "rootlayer_name");
+      if( !rootlayer_name )
+          rootlayer_name = map->name;
+      if( rootlayer_name && msStringInArray(rootlayer_name, layers, numlayers) ) {
+        for(j=0; j<map->numlayers; j++) {
+          layerObj* layer = GET_LAYER(map, j);
+          if( msIsLayerQueryable(layer) &&
+              msIntegerInArray(layer->index, ows_request->enabled_layers, ows_request->numlayers) ) {
+            if (layer->connectiontype == MS_WMS) {
               wms_layer = MS_TRUE;
-              wms_connection = GET_LAYER(map, j)->connection;
+              wms_connection = layer->connection;
             }
 
-            /* Don't turn on layers that are not queryable but have sublayers. */
-            if ((msIsLayerQueryable(GET_LAYER(map, j))) || isUsedInNestedGroup[j] == 0) {
-              numlayers_found++;
-              GET_LAYER(map, j)->status = MS_ON;
+            numlayers_found++;
+            layer->status = MS_ON;
+          }
+        }
+      }
+
+      for(j=0; j<map->numlayers; j++) {
+        layerObj* layer = GET_LAYER(map, j);
+        if( !msIsLayerQueryable(layer) )
+            continue;
+        for(k=0; k<numlayers; k++) {
+          if (((layer->name && strcasecmp(layer->name, layers[k]) == 0) ||
+               (layer->group && strcasecmp(layer->group, layers[k]) == 0) ||
+               ((numNestedGroups[j] >0) && msStringInArray(layers[k], nestedGroups[j], numNestedGroups[j]))) &&
+              (msIntegerInArray(layer->index, ows_request->enabled_layers, ows_request->numlayers)) ) {
+
+            if (layer->connectiontype == MS_WMS) {
+              wms_layer = MS_TRUE;
+              wms_connection = layer->connection;
             }
+
+            numlayers_found++;
+            layer->status = MS_ON;
           }
         }
       }
@@ -3953,10 +4254,7 @@ int msWMSFeatureInfo(mapObj *map, int nVersion, char **names, char **values, int
   /* If a layer of type WMS was found... all layers have to be of that type and with the same connection */
   for (i=0; i<map->numlayers; i++) {
     if (GET_LAYER(map, i)->status == MS_ON) {
-      if (!msIsLayerQueryable(GET_LAYER(map, i))) {
-        msSetError(MS_WMSERR, "Requested layer(s) are not queryable.", "msWMSFeatureInfo()");
-        return msWMSException(map, nVersion, "LayerNotQueryable", wms_exception_format);
-      } else if (wms_layer == MS_TRUE) {
+      if (wms_layer == MS_TRUE) {
         if ( (GET_LAYER(map, i)->connectiontype != MS_WMS) || (strcasecmp(wms_connection, GET_LAYER(map, i)->connection) != 0) ) {
           msSetError(MS_WMSERR, "Requested WMS layer(s) are not queryable: type or connection differ", "msWMSFeatureInfo()");
           return msWMSException(map, nVersion, "LayerNotQueryable", wms_exception_format);

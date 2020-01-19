@@ -217,7 +217,6 @@ msNearestRasterResampler( imageObj *psSrcImage, rasterBufferObj *src_rb,
   free( panSuccess );
   free( x );
   free( y );
-  msFree(mask_rb);
 
   /* -------------------------------------------------------------------- */
   /*      Some debugging output.                                          */
@@ -450,7 +449,6 @@ msBilinearRasterResampler( imageObj *psSrcImage, rasterBufferObj *src_rb,
   free( panSuccess );
   free( x );
   free( y );
-  msFree(mask_rb);
 
   /* -------------------------------------------------------------------- */
   /*      Some debugging output.                                          */
@@ -648,7 +646,6 @@ msAverageRasterResampler( imageObj *psSrcImage, rasterBufferObj *src_rb,
   free( panSuccess2 );
   free( x2 );
   free( y2 );
-  msFree(mask_rb);
 
   /* -------------------------------------------------------------------- */
   /*      Some debugging output.                                          */
@@ -1136,18 +1133,8 @@ static int msTransformMapToSource( int nDstXSize, int nDstYSize,
   /* -------------------------------------------------------------------- */
   if( bOutInit && pj_is_latlong(psSrcProj->proj) )
   {
-      int bHasLonWrap = MS_FALSE;
       double dfLonWrap = 0;
-      for( i = 0; i < psSrcProj->numargs; i++ )
-      {
-          if( strncmp(psSrcProj->args[i], "lon_wrap=",
-                      strlen("lon_wrap=")) == 0 )
-          {
-              bHasLonWrap = MS_TRUE;
-              dfLonWrap = atof( psSrcProj->args[i] + strlen("lon_wrap=") );
-              break;
-          }
-      }
+      int bHasLonWrap = msProjectHasLonWrap(psSrcProj, &dfLonWrap);
 
       if( bHasLonWrap )
       {
@@ -1366,14 +1353,47 @@ int msResampleGDALToMap( mapObj *map, layerObj *layer, imageObj *image,
   /* -------------------------------------------------------------------- */
   if( CSLFetchBoolean( layer->processing, "LOAD_WHOLE_IMAGE", FALSE ) )
     bSuccess = FALSE;
-  else
+  else {
     bSuccess =
       msTransformMapToSource( nDstXSize, nDstYSize, adfDstGeoTransform,
                               &(map->projection),
                               nSrcXSize, nSrcYSize,adfInvSrcGeoTransform,
                               &(layer->projection),
                               &sSrcExtent, FALSE );
+      if (bSuccess) {
+    /* -------------------------------------------------------------------- */
+    /*      Repeat transformation for a rectangle interior to the output    */
+    /*      requested region.  If the latter results in a more extreme y    */
+    /*      extent, then extend extents in source layer projection to       */
+    /*      southern/northing bounds and entire x extent.                   */
+    /* -------------------------------------------------------------------- */
+      memcpy( &sOrigSrcExtent, &sSrcExtent, sizeof(sSrcExtent) );
+      adfDstGeoTransform[0] = adfDstGeoTransform[0] + adfDstGeoTransform[1];
+      adfDstGeoTransform[3] = adfDstGeoTransform[3] + adfDstGeoTransform[5];
+      bSuccess =
+          msTransformMapToSource( nDstXSize-2, nDstYSize-2, adfDstGeoTransform,
+                                  &(map->projection),
+                                  nSrcXSize, nSrcYSize,adfInvSrcGeoTransform,
+                                  &(layer->projection),
+                                  &sSrcExtent, FALSE );
+      /* Reset this array to its original value! */
+      memcpy( adfDstGeoTransform, map->gt.geotransform, sizeof(double)*6 );
 
+      if (bSuccess) {
+          if (sSrcExtent.maxy > sOrigSrcExtent.maxy || sSrcExtent.miny < sOrigSrcExtent.miny) {
+              msDebug( "msTransformMapToSource(): extending bounds.\n");
+              sOrigSrcExtent.minx = 0;
+              sOrigSrcExtent.maxx = nSrcXSize;
+              if (sSrcExtent.maxy > sOrigSrcExtent.maxy)
+                  sOrigSrcExtent.maxy = nSrcYSize;
+              if (sSrcExtent.miny < sOrigSrcExtent.miny)
+                  sOrigSrcExtent.miny = 0;
+          }
+      }
+      memcpy( &sSrcExtent, &sOrigSrcExtent, sizeof(sOrigSrcExtent) );
+      bSuccess = TRUE;
+    }
+  }
   /* -------------------------------------------------------------------- */
   /*      If the transformation failed, it is likely that we have such    */
   /*      broad extents that the projection transformation failed at      */
@@ -1430,6 +1450,7 @@ int msResampleGDALToMap( mapObj *map, layerObj *layer, imageObj *image,
             if( layer->debug )
                 msDebug( "msResampleGDALToMap(): Request matching raster resolution and pixel boundaries. "
                          "No need to do resampling/reprojection.\n" );
+            msFree(mask_rb);
             return msDrawRasterLayerGDAL( map, layer, image, rb, hDS );
       }
 
@@ -1472,6 +1493,7 @@ int msResampleGDALToMap( mapObj *map, layerObj *layer, imageObj *image,
       || sSrcExtent.maxy <= sSrcExtent.miny ) {
     if( layer->debug )
       msDebug( "msResampleGDALToMap(): no overlap ... no result.\n" );
+    msFree(mask_rb);
     return 0;
   }
 
@@ -1612,18 +1634,22 @@ int msResampleGDALToMap( mapObj *map, layerObj *layer, imageObj *image,
                             sDummyMap.outputformat, NULL, NULL,
                             map->resolution, map->defresolution, &(sDummyMap.imagecolor));
 
-  if (srcImage == NULL)
+  if (srcImage == NULL) {
+    msFree(mask_rb);
     return -1; /* msSetError() should have been called already */
+  }
 
   if( MS_RENDERER_PLUGIN( srcImage->format ) ) {
     psrc_rb = &src_rb;
     memset( psrc_rb, 0, sizeof(rasterBufferObj) );
     if( srcImage->format->vtable->supports_pixel_buffer ) {
       if(UNLIKELY(MS_FAILURE == srcImage->format->vtable->getRasterBufferHandle( srcImage, psrc_rb ))) {
+        msFree(mask_rb);
         return -1;
       }
     } else {
       if(UNLIKELY(MS_FAILURE == srcImage->format->vtable->initializeRasterBuffer(psrc_rb,nLoadImgXSize, nLoadImgYSize,MS_IMAGEMODE_RGBA))) {
+        msFree(mask_rb);
         return -1;
       }
     }
@@ -1651,6 +1677,7 @@ int msResampleGDALToMap( mapObj *map, layerObj *layer, imageObj *image,
         msFreeRasterBuffer(psrc_rb);
 
       msFreeImage( srcImage );
+      msFree(mask_rb);
 
       return result;
     }
@@ -1671,6 +1698,7 @@ int msResampleGDALToMap( mapObj *map, layerObj *layer, imageObj *image,
     if( MS_RENDERER_PLUGIN( srcImage->format ) && !srcImage->format->vtable->supports_pixel_buffer)
       msFreeRasterBuffer(psrc_rb);
     msFreeImage( srcImage );
+    msFree(mask_rb);
     return MS_PROJERR;
   }
 
@@ -1709,6 +1737,7 @@ int msResampleGDALToMap( mapObj *map, layerObj *layer, imageObj *image,
   /* -------------------------------------------------------------------- */
   /*      cleanup                                                         */
   /* -------------------------------------------------------------------- */
+  msFree(mask_rb);
   if( MS_RENDERER_PLUGIN( srcImage->format ) && !srcImage->format->vtable->supports_pixel_buffer)
     msFreeRasterBuffer(psrc_rb);
   msFreeImage( srcImage );

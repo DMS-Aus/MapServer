@@ -39,6 +39,10 @@
 #include "mapcopy.h"
 #include "mapows.h"
 
+#if defined(USE_OGR) || defined(USE_GDAL)
+#include "gdal.h"
+#endif
+
 #if defined(_WIN32) && !defined(__CYGWIN__)
 # include <windows.h>
 # include <tchar.h>
@@ -250,7 +254,7 @@ static void bindLabel(layerObj *layer, shapeObj *shape, labelObj *label, int dra
     }
 
     if(label->bindings[MS_LABEL_BINDING_POSITION].index != -1) {
-      int tmpPosition;
+      int tmpPosition = 0;
       bindIntegerAttribute(&tmpPosition, shape->values[label->bindings[MS_LABEL_BINDING_POSITION].index]);
       if(tmpPosition != 0) { /* is this test sufficient? */
         label->position = tmpPosition;
@@ -826,7 +830,7 @@ int msConstrainExtent(rectObj *bounds, rectObj *rect, double overlay)
 ** The filename is NULL when the image is supposed to be written to stdout.
 */
 
-int msSaveImage(mapObj *map, imageObj *img, char *filename)
+int msSaveImage(mapObj *map, imageObj *img, const char *filename)
 {
   int nReturnVal = MS_FAILURE;
   char szPath[MS_MAXPATHLEN];
@@ -1478,7 +1482,7 @@ char *msTmpPath(mapObj *map, const char *mappath, const char *tmppath)
   }
 
   fullPath = msBuildPath(szPath, mappath, tmpBase);
-  return strdup(fullPath);
+  return msStrdup(fullPath);
 }
 
 /**********************************************************************
@@ -1505,7 +1509,7 @@ char *msTmpFilename(const char *ext)
   snprintf(tmpFname, tmpFnameBufsize, "%s_%x.%s", tmpId, tmpCount++, ext);
   msReleaseLock( TLOCK_TMPFILE );
 
-  fullFname = strdup(tmpFname);
+  fullFname = msStrdup(tmpFname);
   free(tmpFname);
 
   return fullFname;
@@ -1956,6 +1960,19 @@ void msCleanup()
 #ifdef USE_GDAL
   msGDALCleanup();
 #endif
+
+  /* Release both GDAL and OGR resources */
+#if defined(USE_OGR) || defined(USE_GDAL)
+  msAcquireLock( TLOCK_GDAL );
+#if GDAL_VERSION_MAJOR >= 3 || (GDAL_VERSION_MAJOR == 2 && GDAL_VERSION_MINOR == 4)
+  /* Cleanup some GDAL global resources in particular */
+  GDALDestroy();
+#else
+  GDALDestroyDriverManager();
+#endif
+  msReleaseLock( TLOCK_GDAL );
+#endif
+
 #ifdef USE_PROJ
 #  if PJ_VERSION >= 480
   pj_clear_initcache();
@@ -2270,6 +2287,14 @@ int msExtentsOverlap(mapObj *map, layerObj *layer)
   ** in the same projection. */
   if( ! (layer->projection.numargs > 0) )
     return msRectOverlap( &(map->extent), &(layer->extent) );
+
+  /* In the case where map and layer projections are identical, and the */
+  /* bounding boxes don't cross the dateline, do simple rectangle comparison */
+  if( map->extent.minx < map->extent.maxx &&
+      layer->extent.minx < layer->extent.maxx &&
+      !msProjectionsDiffer(&(map->projection), &(layer->projection)) ) {
+    return msRectOverlap( &(map->extent), &(layer->extent) );
+  }
 
   /* We need to transform our rectangles for comparison,
   ** so we will work with copies and leave the originals intact. */

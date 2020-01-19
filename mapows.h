@@ -119,6 +119,13 @@ typedef  struct {
   char         *httpcookiedata;
 } wmsParamsObj;
 
+/* metadataParamsObj: Represent a metadata specific request with its enabled layers */
+typedef struct {
+  char *pszRequest;
+  char *pszLayer;
+  char *pszOutputSchema;
+} metadataParamsObj;
+
 /* owsRequestObj: Represent a OWS specific request with its enabled layers */
 typedef struct {
   int numlayers;
@@ -182,6 +189,7 @@ MS_DLL_EXPORT const char *msOWSGetInspireSchemasLocation(mapObj *map);
 MS_DLL_EXPORT const char *msOWSGetLanguage(mapObj *map, const char *context);
 MS_DLL_EXPORT char **msOWSGetLanguageList(mapObj *map, const char *namespaces, int *numitems);
 MS_DLL_EXPORT char *msOWSGetLanguageFromList(mapObj *map, const char *namespaces, const char *requested_language);
+MS_DLL_EXPORT char *msOWSLanguageNegotiation(mapObj *map, const char *namespaces, char **accept_languages, int num_accept_languages);
 
 
 /* OWS_NOERR and OWS_WARN passed as action_if_not_found to printMetadata() */
@@ -193,7 +201,8 @@ MS_DLL_EXPORT char *msOWSGetLanguageFromList(mapObj *map, const char *namespaces
 typedef enum
 {
     OWS_WMS = 1,
-    OWS_WFS = 2
+    OWS_WFS = 2,
+    OWS_WCS = 3
 } OWSServiceType;
 
 MS_DLL_EXPORT int msOWSPrintInspireCommonExtendedCapabilities(FILE *stream, mapObj *map, const char *namespaces,
@@ -293,7 +302,7 @@ void msOWSProcessException(layerObj *lp, const char *pszFname,
                            int nErrorCode, const char *pszFuncName);
 char *msOWSBuildURLFilename(const char *pszPath, const char *pszURL,
                             const char *pszExt);
-const char *msOWSGetEPSGProj(projectionObj *proj, hashTableObj *metadata, const char *namespaces, int bReturnOnlyFirstOne);
+void msOWSGetEPSGProj(projectionObj *proj, hashTableObj *metadata, const char *namespaces, int bReturnOnlyFirstOne, char **epsgProj);
 char *msOWSGetProjURN(projectionObj *proj, hashTableObj *metadata, const char *namespaces, int bReturnOnlyFirstOne);
 char *msOWSGetProjURI(projectionObj *proj, hashTableObj *metadata, const char *namespaces, int bReturnOnlyFirstOne);
 
@@ -461,6 +470,16 @@ int msWMSLayerExecuteRequest(mapObj *map, int nOWSLayers, int nClickX, int nClic
                              int nFeatureCount, const char *pszInfoFormat, int type);
 
 /*====================================================================
+ *   mapmetadata.c
+ *====================================================================*/
+metadataParamsObj *msMetadataCreateParamsObj(void);
+void msMetadataFreeParamsObj(metadataParamsObj *metadataparams);
+int msMetadataParseRequest(mapObj *map, cgiRequestObj *request, owsRequestObj *ows_request,
+                      metadataParamsObj *metadataparams);
+int msMetadataDispatch(mapObj *map, cgiRequestObj *requestobj, owsRequestObj *ows_request);
+void msMetadataSetGetMetadataURL(layerObj *lp, const char *url);
+
+/*====================================================================
  *   mapwfs.c
  *====================================================================*/
 
@@ -484,7 +503,8 @@ int msWFSGetCapabilities11(mapObj *map, wfsParamsObj *wfsparams,
                            cgiRequestObj *req, owsRequestObj *ows_request);
 #ifdef USE_LIBXML2
 xmlNodePtr msWFSDumpLayer11(mapObj *map, layerObj *lp, xmlNsPtr psNsOws,
-                          int nWFSVersion, const char* validate_language);
+                            int nWFSVersion, const char* validate_language,
+                            char *script_url);
 #endif
 char *msWFSGetOutputFormatList(mapObj *map, layerObj *layer, int nWFSVersion);
 

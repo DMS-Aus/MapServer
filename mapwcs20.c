@@ -57,6 +57,37 @@
 
 
 
+
+
+/************************************************************************/
+/*                          msXMLStripIndentation                       */
+/************************************************************************/
+
+static void msXMLStripIndentation(char* ptr)
+{
+    /* Remove spaces between > and < to get properly indented result */
+    char* afterLastClosingBracket = NULL;
+    if( *ptr == ' ' )
+        afterLastClosingBracket = ptr;
+    while( *ptr != '\0' )
+    {
+        if( *ptr == '<' && afterLastClosingBracket != NULL )
+        {
+            memmove(afterLastClosingBracket, ptr, strlen(ptr) + 1);
+            ptr = afterLastClosingBracket;
+        }
+        else if( *ptr == '>' )
+        {
+            afterLastClosingBracket = ptr + 1;
+        }
+        else if( *ptr != ' ' &&  *ptr != '\n' )
+            afterLastClosingBracket = NULL;
+        ptr ++;
+    }
+}
+
+
+
 /************************************************************************/
 /*                   msStringParseInteger()                             */
 /*                                                                      */
@@ -275,6 +306,7 @@ wcs20ParamsObjPtr msWCSCreateParamsObj20()
   params->request         = NULL;
   params->service         = NULL;
   params->accept_versions = NULL;
+  params->accept_languages = NULL;
   params->sections        = NULL;
   params->updatesequence  = NULL;
   params->ids             = NULL;
@@ -317,6 +349,7 @@ void msWCSFreeParamsObj20(wcs20ParamsObjPtr params)
   msFree(params->request);
   msFree(params->service);
   CSLDestroy(params->accept_versions);
+  CSLDestroy(params->accept_languages);
   CSLDestroy(params->sections);
   msFree(params->updatesequence);
   CSLDestroy(params->ids);
@@ -741,6 +774,24 @@ xmlNodePtr msLibXml2GetFirstChildNs(xmlNodePtr parent, const char *name, xmlNsPt
   }
   return NULL;
 }
+
+/*
+  Utility function to get the first child of a node with a given node name
+  */
+
+xmlNodePtr msLibXml2GetFirstChildElement(xmlNodePtr parent) {
+  xmlNodePtr node;
+  if (!parent) {
+    return NULL;
+  }
+
+  XML_FOREACH_CHILD(parent, node) {
+    if (node->type == XML_ELEMENT_NODE) {
+      return node;
+    }
+  }
+  return NULL;
+}
 #endif /* defined(USE_LIBXML2) */
 
 /************************************************************************/
@@ -760,7 +811,6 @@ static int msWCSParseRequest20_XMLGetCapabilities(
     else if (EQUAL((char *)child->name, "AcceptVersions")) {
       xmlNodePtr versionNode = NULL;
       XML_FOREACH_CHILD(child, versionNode) {
-        /* for(child = firstChild->children; child != NULL; child = child->next) */
         XML_LOOP_IGNORE_COMMENT_OR_TEXT(versionNode);
         XML_ASSERT_NODE_NAME(versionNode, "Version");
 
@@ -785,7 +835,15 @@ static int msWCSParseRequest20_XMLGetCapabilities(
       /* Maybe not necessary, since only format is xml.   */
       /* At least ignore it, to not generate an error.    */
     } else if(EQUAL((char *)child->name, "AcceptLanguages")) {
-      /* ignore */
+      xmlNodePtr languageNode;
+      XML_FOREACH_CHILD(child, languageNode) {
+        XML_LOOP_IGNORE_COMMENT_OR_TEXT(languageNode)
+        XML_ASSERT_NODE_NAME(languageNode, "Language");
+
+        content = (char *)xmlNodeGetContent(languageNode);
+        params->accept_languages = CSLAddString(params->accept_languages, content);
+        xmlFree(content);
+      }
     } else {
       XML_UNKNOWN_NODE_ERROR(child);
     }
@@ -1022,6 +1080,7 @@ static int msWCSParseRequest20_XMLGetCoverage(
       xmlNodePtr bandNode = NULL;
       XML_FOREACH_CHILD(child, bandNode) {
         char *content = NULL;
+        XML_LOOP_IGNORE_COMMENT_OR_TEXT(bandNode);
         XML_ASSERT_NODE_NAME(bandNode, "band");
 
         content = (char *)xmlNodeGetContent(bandNode);
@@ -1034,72 +1093,20 @@ static int msWCSParseRequest20_XMLGetCoverage(
       XML_FOREACH_CHILD(child, extensionNode) {
         XML_LOOP_IGNORE_COMMENT_OR_TEXT(extensionNode);
 
-        if (EQUAL((char *) extensionNode->name, "ScaleByFactor")) {
-          xmlNodePtr scaleFactorNode = extensionNode->children;
-          char *content;
-          if (!scaleFactorNode || !EQUAL((char *)scaleFactorNode->name, "scaleFactor")) {
-            msSetError(MS_WCSERR, "Missing 'scaleFactor' node.",
-                       "msWCSParseRequest20_XMLGetCoverage()");
-            return MS_FAILURE;
-          }
-          content = (char *)xmlNodeGetContent(scaleFactorNode);
-          if (msStringParseDouble(content, &(params->scale)) != MS_SUCCESS
-              || params->scale < 0.0) {
-            msSetError(MS_WCSERR, "Invalid scaleFactor '%s'.",
-                       "msWCSParseRequest20_XMLGetCoverage()", content);
-            xmlFree(content);
-            return MS_FAILURE;
-          }
-          xmlFree(content);
-        }
+        if (EQUAL((char *) extensionNode->name, "Scaling")) {
+          xmlNodePtr scaleMethodNode = msLibXml2GetFirstChildElement(extensionNode);
 
-        else if (EQUAL((char *) extensionNode->name, "ScaleAxesByFactor")) {
-          xmlNodePtr scaleAxisNode, axisNode, scaleFactorNode;
-          char *axisName, *content;
-          wcs20AxisObjPtr axis;
-
-          XML_FOREACH_CHILD(extensionNode, scaleAxisNode) {
-            XML_LOOP_IGNORE_COMMENT_OR_TEXT(scaleAxisNode);
-
-            if (!EQUAL((char *)scaleAxisNode->name, "ScaleAxis")) {
-              msSetError(MS_WCSERR, "Invalid ScaleAxesByFactor.",
+          if (EQUAL((char *) scaleMethodNode->name, "ScaleByFactor")) {
+            xmlNodePtr scaleFactorNode = msLibXml2GetFirstChildElement(scaleMethodNode);
+            char *content;
+            if (!scaleFactorNode || !EQUAL((char *)scaleFactorNode->name, "scaleFactor")) {
+              msSetError(MS_WCSERR, "Missing 'scaleFactor' node.",
                          "msWCSParseRequest20_XMLGetCoverage()");
               return MS_FAILURE;
             }
-
-            /* axis */
-            if (NULL == (axisNode = msLibXml2GetFirstChild(scaleAxisNode, "axis"))) {
-              msSetError(MS_WCSERR, "Missing axis node",
-                         "msWCSParseRequest20_XMLGetCoverage()");
-              return MS_FAILURE;
-            }
-            axisName = (char *)xmlNodeGetContent(axisNode);
-            if(NULL == (axis = msWCSFindAxis20(params, axisName))) {
-              if(NULL == (axis = msWCSCreateAxisObj20())) {
-                xmlFree(axisName);
-                return MS_FAILURE;
-              }
-              axis->name = msStrdup(axisName);
-              msWCSInsertAxisObj20(params, axis);
-            }
-            xmlFree(axisName);
-
-            if (axis->scale != MS_WCS20_UNBOUNDED) {
-              msSetError(MS_WCSERR, "scaleFactor was already set for axis '%s'.",
-                         "msWCSParseRequest20_XMLGetCoverage()", axis->name);
-              return MS_FAILURE;
-            }
-
-            /* scaleFactor */
-            if (NULL == (scaleFactorNode = msLibXml2GetFirstChild(scaleAxisNode, "scaleFactor"))) {
-              msSetError(MS_WCSERR, "Missing scaleFactor node",
-                         "msWCSParseRequest20_XMLGetCoverage()");
-              return MS_FAILURE;
-            }
-
             content = (char *)xmlNodeGetContent(scaleFactorNode);
-            if (msStringParseDouble(content, &(axis->scale)) != MS_SUCCESS
-                || axis->scale < 0.0) {
+            if (msStringParseDouble(content, &(params->scale)) != MS_SUCCESS
+                || params->scale < 0.0) {
               msSetError(MS_WCSERR, "Invalid scaleFactor '%s'.",
                          "msWCSParseRequest20_XMLGetCoverage()", content);
               xmlFree(content);
@@ -1107,141 +1114,197 @@ static int msWCSParseRequest20_XMLGetCoverage(
             }
             xmlFree(content);
           }
-        }
 
-        else if (EQUAL((char *) extensionNode->name, "ScaleToSize")) {
-          xmlNodePtr scaleAxisNode, axisNode, targetSizeNode;
-          char *axisName, *content;
-          wcs20AxisObjPtr axis;
+          else if (EQUAL((char *) scaleMethodNode->name, "ScaleAxesByFactor")) {
+            xmlNodePtr scaleAxisNode, axisNode, scaleFactorNode;
+            char *axisName, *content;
+            wcs20AxisObjPtr axis;
 
-          XML_FOREACH_CHILD(extensionNode, scaleAxisNode) {
-            XML_LOOP_IGNORE_COMMENT_OR_TEXT(scaleAxisNode);
+            XML_FOREACH_CHILD(scaleMethodNode, scaleAxisNode) {
+              XML_LOOP_IGNORE_COMMENT_OR_TEXT(scaleAxisNode);
 
-            if (!EQUAL((char *)scaleAxisNode->name, "targetAxisSize")) {
-              msSetError(MS_WCSERR, "Invalid ScaleToSize.",
-                         "msWCSParseRequest20_XMLGetCoverage()");
-              return MS_FAILURE;
-            }
-
-            /* axis */
-            if (NULL == (axisNode = msLibXml2GetFirstChild(scaleAxisNode, "axis"))) {
-              msSetError(MS_WCSERR, "Missing axis node",
-                         "msWCSParseRequest20_XMLGetCoverage()");
-              return MS_FAILURE;
-            }
-            axisName = (char *)xmlNodeGetContent(axisNode);
-            if(NULL == (axis = msWCSFindAxis20(params, axisName))) {
-              if(NULL == (axis = msWCSCreateAxisObj20())) {
-                xmlFree(axisName);
+              if (!EQUAL((char *)scaleAxisNode->name, "ScaleAxis")) {
+                msSetError(MS_WCSERR, "Invalid ScaleAxesByFactor.",
+                           "msWCSParseRequest20_XMLGetCoverage()");
                 return MS_FAILURE;
               }
-              axis->name = msStrdup(axisName);
-              msWCSInsertAxisObj20(params, axis);
-            }
-            xmlFree(axisName);
 
-            if (axis->size != 0) {
-              msSetError(MS_WCSERR, "targetSize was already set for axis '%s'.",
-                         "msWCSParseRequest20_XMLGetCoverage()", axis->name);
-              return MS_FAILURE;
-            }
+              /* axis */
+              if (NULL == (axisNode = msLibXml2GetFirstChild(scaleAxisNode, "axis"))) {
+                msSetError(MS_WCSERR, "Missing axis node",
+                           "msWCSParseRequest20_XMLGetCoverage()");
+                return MS_FAILURE;
+              }
+              axisName = (char *)xmlNodeGetContent(axisNode);
+              if(NULL == (axis = msWCSFindAxis20(params, axisName))) {
+                if(NULL == (axis = msWCSCreateAxisObj20())) {
+                  xmlFree(axisName);
+                  return MS_FAILURE;
+                }
+                axis->name = msStrdup(axisName);
+                msWCSInsertAxisObj20(params, axis);
+              }
+              xmlFree(axisName);
 
-            /* targetSize */
-            if (NULL == (targetSizeNode = msLibXml2GetFirstChild(scaleAxisNode, "targetSize"))) {
-              msSetError(MS_WCSERR, "Missing targetSize node",
-                         "msWCSParseRequest20_XMLGetCoverage()");
-              return MS_FAILURE;
-            }
+              if (axis->scale != MS_WCS20_UNBOUNDED) {
+                msSetError(MS_WCSERR, "scaleFactor was already set for axis '%s'.",
+                           "msWCSParseRequest20_XMLGetCoverage()", axis->name);
+                return MS_FAILURE;
+              }
 
-            content = (char *)xmlNodeGetContent(targetSizeNode);
-            if (msStringParseInteger(content, &(axis->size)) != MS_SUCCESS
-                || axis->size <= 0) {
-              msSetError(MS_WCSERR, "Invalid targetSize '%s'.",
-                         "msWCSParseRequest20_XMLGetCoverage()", content);
+              /* scaleFactor */
+              if (NULL == (scaleFactorNode = msLibXml2GetFirstChild(scaleAxisNode, "scaleFactor"))) {
+                msSetError(MS_WCSERR, "Missing scaleFactor node",
+                           "msWCSParseRequest20_XMLGetCoverage()");
+                return MS_FAILURE;
+              }
+
+              content = (char *)xmlNodeGetContent(scaleFactorNode);
+              if (msStringParseDouble(content, &(axis->scale)) != MS_SUCCESS
+                  || axis->scale < 0.0) {
+                msSetError(MS_WCSERR, "Invalid scaleFactor '%s'.",
+                           "msWCSParseRequest20_XMLGetCoverage()", content);
+                xmlFree(content);
+                return MS_FAILURE;
+              }
               xmlFree(content);
-              return MS_FAILURE;
             }
-            xmlFree(content);
           }
-        }
 
-        else if (EQUAL((char *) extensionNode->name, "ScaleToExtent")) {
-          xmlNodePtr scaleAxisNode, axisNode, lowNode, highNode;
-          char *axisName, *content;
-          wcs20AxisObjPtr axis;
-          int low, high;
+          else if (EQUAL((char *) scaleMethodNode->name, "ScaleToSize")) {
+            xmlNodePtr scaleAxisNode, axisNode, targetSizeNode;
+            char *axisName, *content;
+            wcs20AxisObjPtr axis;
 
-          XML_FOREACH_CHILD(extensionNode, scaleAxisNode) {
-            XML_LOOP_IGNORE_COMMENT_OR_TEXT(scaleAxisNode);
+            XML_FOREACH_CHILD(scaleMethodNode, scaleAxisNode) {
+              XML_LOOP_IGNORE_COMMENT_OR_TEXT(scaleAxisNode);
 
-            if (!EQUAL((char *)scaleAxisNode->name, "TargetAxisExtent")) {
-              msSetError(MS_WCSERR, "Invalid ScaleToExtent.",
-                         "msWCSParseRequest20_XMLGetCoverage()");
-              return MS_FAILURE;
-            }
-
-            /* axis */
-            if (NULL == (axisNode = msLibXml2GetFirstChild(scaleAxisNode, "axis"))) {
-              msSetError(MS_WCSERR, "Missing axis node",
-                         "msWCSParseRequest20_XMLGetCoverage()");
-              return MS_FAILURE;
-            }
-            axisName = (char *)xmlNodeGetContent(axisNode);
-            if(NULL == (axis = msWCSFindAxis20(params, axisName))) {
-              if(NULL == (axis = msWCSCreateAxisObj20())) {
-                xmlFree(axisName);
+              if (!EQUAL((char *)scaleAxisNode->name, "TargetAxisSize")) {
+                msSetError(MS_WCSERR, "Invalid ScaleToSize.",
+                           "msWCSParseRequest20_XMLGetCoverage()");
                 return MS_FAILURE;
               }
-              axis->name = msStrdup(axisName);
-              msWCSInsertAxisObj20(params, axis);
-            }
-            xmlFree(axisName);
 
-            if (axis->size != 0) {
-              msSetError(MS_WCSERR, "targetSize was already set for axis '%s'.",
-                         "msWCSParseRequest20_XMLGetCoverage()", axis->name);
-              return MS_FAILURE;
-            }
+              /* axis */
+              if (NULL == (axisNode = msLibXml2GetFirstChild(scaleAxisNode, "axis"))) {
+                msSetError(MS_WCSERR, "Missing axis node",
+                           "msWCSParseRequest20_XMLGetCoverage()");
+                return MS_FAILURE;
+              }
+              axisName = (char *)xmlNodeGetContent(axisNode);
+              if(NULL == (axis = msWCSFindAxis20(params, axisName))) {
+                if(NULL == (axis = msWCSCreateAxisObj20())) {
+                  xmlFree(axisName);
+                  return MS_FAILURE;
+                }
+                axis->name = msStrdup(axisName);
+                msWCSInsertAxisObj20(params, axis);
+              }
+              xmlFree(axisName);
 
-            /* targetSize */
-            if (NULL == (lowNode = msLibXml2GetFirstChild(scaleAxisNode, "low"))) {
-              msSetError(MS_WCSERR, "Missing low node",
-                         "msWCSParseRequest20_XMLGetCoverage()");
-              return MS_FAILURE;
-            }
+              if (axis->size != 0) {
+                msSetError(MS_WCSERR, "targetSize was already set for axis '%s'.",
+                           "msWCSParseRequest20_XMLGetCoverage()", axis->name);
+                return MS_FAILURE;
+              }
 
-            if (NULL == (highNode = msLibXml2GetFirstChild(scaleAxisNode, "high"))) {
-              msSetError(MS_WCSERR, "Missing high node",
-                         "msWCSParseRequest20_XMLGetCoverage()");
-              return MS_FAILURE;
-            }
+              /* targetSize */
+              if (NULL == (targetSizeNode = msLibXml2GetFirstChild(scaleAxisNode, "targetSize"))) {
+                msSetError(MS_WCSERR, "Missing targetSize node",
+                           "msWCSParseRequest20_XMLGetCoverage()");
+                return MS_FAILURE;
+              }
 
-            content = (char *)xmlNodeGetContent(lowNode);
-            if (msStringParseInteger(content, &low) != MS_SUCCESS) {
-              msSetError(MS_WCSERR, "Invalid low value '%s'.",
-                         "msWCSParseRequest20_XMLGetCoverage()", content);
+              content = (char *)xmlNodeGetContent(targetSizeNode);
+              if (msStringParseInteger(content, &(axis->size)) != MS_SUCCESS
+                  || axis->size <= 0) {
+                msSetError(MS_WCSERR, "Invalid targetSize '%s'.",
+                           "msWCSParseRequest20_XMLGetCoverage()", content);
+                xmlFree(content);
+                return MS_FAILURE;
+              }
               xmlFree(content);
-              return MS_FAILURE;
             }
-            xmlFree(content);
+          }
 
+          else if (EQUAL((char *) scaleMethodNode->name, "ScaleToExtent")) {
+            xmlNodePtr scaleAxisNode, axisNode, lowNode, highNode;
+            char *axisName, *content;
+            wcs20AxisObjPtr axis;
+            int low, high;
 
-            content = (char *)xmlNodeGetContent(highNode);
-            if (msStringParseInteger(content, &high) != MS_SUCCESS) {
-              msSetError(MS_WCSERR, "Invalid high value '%s'.",
-                         "msWCSParseRequest20_XMLGetCoverage()", content);
+            XML_FOREACH_CHILD(scaleMethodNode, scaleAxisNode) {
+              XML_LOOP_IGNORE_COMMENT_OR_TEXT(scaleAxisNode);
+
+              if (!EQUAL((char *)scaleAxisNode->name, "TargetAxisExtent")) {
+                msSetError(MS_WCSERR, "Invalid ScaleToExtent.",
+                           "msWCSParseRequest20_XMLGetCoverage()");
+                return MS_FAILURE;
+              }
+
+              /* axis */
+              if (NULL == (axisNode = msLibXml2GetFirstChild(scaleAxisNode, "axis"))) {
+                msSetError(MS_WCSERR, "Missing axis node",
+                           "msWCSParseRequest20_XMLGetCoverage()");
+                return MS_FAILURE;
+              }
+              axisName = (char *)xmlNodeGetContent(axisNode);
+              if(NULL == (axis = msWCSFindAxis20(params, axisName))) {
+                if(NULL == (axis = msWCSCreateAxisObj20())) {
+                  xmlFree(axisName);
+                  return MS_FAILURE;
+                }
+                axis->name = msStrdup(axisName);
+                msWCSInsertAxisObj20(params, axis);
+              }
+              xmlFree(axisName);
+
+              if (axis->size != 0) {
+                msSetError(MS_WCSERR, "targetSize was already set for axis '%s'.",
+                           "msWCSParseRequest20_XMLGetCoverage()", axis->name);
+                return MS_FAILURE;
+              }
+
+              /* targetSize */
+              if (NULL == (lowNode = msLibXml2GetFirstChild(scaleAxisNode, "low"))) {
+                msSetError(MS_WCSERR, "Missing low node",
+                           "msWCSParseRequest20_XMLGetCoverage()");
+                return MS_FAILURE;
+              }
+
+              if (NULL == (highNode = msLibXml2GetFirstChild(scaleAxisNode, "high"))) {
+                msSetError(MS_WCSERR, "Missing high node",
+                           "msWCSParseRequest20_XMLGetCoverage()");
+                return MS_FAILURE;
+              }
+
+              content = (char *)xmlNodeGetContent(lowNode);
+              if (msStringParseInteger(content, &low) != MS_SUCCESS) {
+                msSetError(MS_WCSERR, "Invalid low value '%s'.",
+                           "msWCSParseRequest20_XMLGetCoverage()", content);
+                xmlFree(content);
+                return MS_FAILURE;
+              }
               xmlFree(content);
-              return MS_FAILURE;
-            }
-            xmlFree(content);
 
-            if (high <= low) {
-              msSetError(MS_WCSERR, "Invalid extent, high is lower than low.",
-                         "msWCSParseRequest20_XMLGetCoverage()");
-              return MS_FAILURE;
-            }
 
-            axis->size = high - low;
+              content = (char *)xmlNodeGetContent(highNode);
+              if (msStringParseInteger(content, &high) != MS_SUCCESS) {
+                msSetError(MS_WCSERR, "Invalid high value '%s'.",
+                           "msWCSParseRequest20_XMLGetCoverage()", content);
+                xmlFree(content);
+                return MS_FAILURE;
+              }
+              xmlFree(content);
+
+              if (high <= low) {
+                msSetError(MS_WCSERR, "Invalid extent, high is lower than low.",
+                           "msWCSParseRequest20_XMLGetCoverage()");
+                return MS_FAILURE;
+              }
+
+              axis->size = high - low;
+            }
           }
         }
 
@@ -1250,39 +1313,39 @@ static int msWCSParseRequest20_XMLGetCoverage(
           xmlNodePtr rangeItemNode = NULL;
 
           XML_FOREACH_CHILD(extensionNode, rangeItemNode) {
-
+            xmlNodePtr rangeItemNodeChild = msLibXml2GetFirstChildElement(rangeItemNode);
             XML_LOOP_IGNORE_COMMENT_OR_TEXT(rangeItemNode);
 
             XML_ASSERT_NODE_NAME(rangeItemNode, "RangeItem");
 
-            if (!rangeItemNode->children) {
+            if (!rangeItemNodeChild) {
               msSetError(MS_WCSERR, "Missing RangeComponent or RangeInterval.",
                                     "msWCSParseRequest20_XMLGetCoverage()");
               return MS_FAILURE;
             }
-            else if (EQUAL((char *) rangeItemNode->children->name, "RangeComponent")) {
-              char *content = (char *)xmlNodeGetContent(rangeItemNode->children);
+            else if (EQUAL((char *) rangeItemNodeChild->name, "RangeComponent")) {
+              char *content = (char *)xmlNodeGetContent(rangeItemNodeChild);
               params->range_subset =
                 CSLAddString(params->range_subset, content);
               xmlFree(content);
             }
-            else if (EQUAL((char *) rangeItemNode->children->name, "RangeInterval")) {
-              xmlNodePtr intervalNode = rangeItemNode->children;
+            else if (EQUAL((char *) rangeItemNodeChild->name, "RangeInterval")) {
+              xmlNodePtr intervalNode = rangeItemNodeChild;
+              xmlNodePtr startComponentNode = msLibXml2GetFirstChild(intervalNode, "startComponent");
+              xmlNodePtr endComponentNode = msLibXml2GetFirstChild(intervalNode, "endComponent");
               char *start;
               char *stop;
               char *value;
               int length;
 
-              if (!intervalNode->children || !intervalNode->children->next
-                  || !EQUAL((char *) intervalNode->children->name, "startComponent")
-                  || !EQUAL((char *) intervalNode->children->next->name, "endComponent")) {
+              if (!startComponentNode || !endComponentNode) {
                 msSetError(MS_WCSERR, "Wrong RangeInterval.",
                                       "msWCSParseRequest20_XMLGetCoverage()");
                 return MS_FAILURE;
               }
 
-              start = (char *)xmlNodeGetContent(intervalNode->children);
-              stop = (char *)xmlNodeGetContent(intervalNode->children->next);
+              start = (char *)xmlNodeGetContent(startComponentNode);
+              stop = (char *)xmlNodeGetContent(endComponentNode);
               length = strlen(start) + strlen(stop) + 2;
               value = msSmallCalloc(length, sizeof(char));
 
@@ -1309,10 +1372,9 @@ static int msWCSParseRequest20_XMLGetCoverage(
         }
 
         else if (EQUAL((char *) extensionNode->name, "Interpolation")) {
-          xmlNodePtr globalInterpolation;
+          xmlNodePtr globalInterpolation = msLibXml2GetFirstChild(extensionNode, "globalInterpolation");
           char *content;
-          if ((globalInterpolation = extensionNode->children) == NULL
-              || !EQUAL((char *)globalInterpolation->name, "globalInterpolation")) {
+          if (globalInterpolation == NULL) {
             msSetError(MS_WCSERR, "Missing 'globalInterpolation' node.",
                                   "msWCSParseRequest20_XMLGetCoverage()");
             return MS_FAILURE;
@@ -1467,7 +1529,10 @@ int msWCSParseRequest20(mapObj *map,
     } else if (EQUAL(key, "ACCEPTFORMATS")) {
       /* ignore */
     } else if (EQUAL(key, "ACCEPTLANGUAGES")) {
-      /* ignore */
+      if (params->accept_languages != NULL) {
+        CSLDestroy(params->accept_languages);
+      }
+      params->accept_languages = CSLTokenizeString2(value, ",", 0);
     } else if (EQUAL(key, "COVERAGEID")) {
       if (params->ids != NULL) {
         msSetError(MS_WCSERR, "Parameter 'CoverageID' is already set. "
@@ -1608,6 +1673,7 @@ int msWCSParseRequest20(mapObj *map,
         axis->size = max - min;
       }
       msFreeCharArray(tokens, num);
+      /* We explicitly don't test for strict equality as the parameter name is supposed to be unique */
     } else if (EQUALN(key, "SIZE", 4)) {
       /* Deprecated scaling */
       wcs20AxisObjPtr axis = NULL;
@@ -1633,6 +1699,7 @@ int msWCSParseRequest20(mapObj *map,
         return MS_FAILURE;
       }
       axis->size = size;
+    /* We explicitly don't test for strict equality as the parameter name is supposed to be unique */
     } else if (EQUALN(key, "RESOLUTION", 10)) {
       wcs20AxisObjPtr axis = NULL;
       char axisName[500];
@@ -1658,6 +1725,7 @@ int msWCSParseRequest20(mapObj *map,
         return MS_FAILURE;
       }
       axis->resolution = resolution;
+    /* We explicitly don't test for strict equality as the parameter name is supposed to be unique */
     } else if (EQUALN(key, "SUBSET", 6)) {
       wcs20AxisObjPtr axis = NULL;
       wcs20SubsetObjPtr subset = msWCSCreateSubsetObj20();
@@ -1778,7 +1846,7 @@ static int msWCSValidateAndFindAxes20(
 /*      structure.                                                      */
 /************************************************************************/
 
-static void msWCSPrepareNamespaces20(xmlDocPtr pDoc, xmlNodePtr psRootNode, mapObj* map)
+static void msWCSPrepareNamespaces20(xmlDocPtr pDoc, xmlNodePtr psRootNode, mapObj* map, int addInspire)
 {
   xmlNsPtr psXsiNs;
   char *schemaLocation = NULL;
@@ -1795,6 +1863,11 @@ static void msWCSPrepareNamespaces20(xmlDocPtr pDoc, xmlNodePtr psRootNode, mapO
   xmlNewNs(psRootNode, BAD_CAST MS_OWSCOMMON_GMLCOV_10_NAMESPACE_URI,     BAD_CAST MS_OWSCOMMON_GMLCOV_NAMESPACE_PREFIX);
   xmlNewNs(psRootNode, BAD_CAST MS_OWSCOMMON_SWE_20_NAMESPACE_URI,        BAD_CAST MS_OWSCOMMON_SWE_NAMESPACE_PREFIX);
 
+  if (addInspire) {
+    xmlNewNs(psRootNode, BAD_CAST MS_INSPIRE_COMMON_NAMESPACE_URI, BAD_CAST MS_INSPIRE_COMMON_NAMESPACE_PREFIX);
+    xmlNewNs(psRootNode, BAD_CAST MS_INSPIRE_DLS_NAMESPACE_URI, BAD_CAST MS_INSPIRE_DLS_NAMESPACE_PREFIX);
+  }
+
   psXsiNs = xmlSearchNs(pDoc, psRootNode, BAD_CAST MS_OWSCOMMON_W3C_XSI_NAMESPACE_PREFIX);
 
   schemaLocation = msEncodeHTMLEntities( msOWSGetSchemasLocation(map) );
@@ -1803,6 +1876,12 @@ static void msWCSPrepareNamespaces20(xmlDocPtr pDoc, xmlNodePtr psRootNode, mapO
   xsi_schemaLocation = msStringConcatenate(xsi_schemaLocation, schemaLocation);
   xsi_schemaLocation = msStringConcatenate(xsi_schemaLocation, MS_OWSCOMMON_WCS_20_SCHEMAS_LOCATION);
   xsi_schemaLocation = msStringConcatenate(xsi_schemaLocation, " ");
+
+  if (addInspire) {
+    xsi_schemaLocation = msStringConcatenate(xsi_schemaLocation, MS_INSPIRE_DLS_NAMESPACE_URI " ");
+    xsi_schemaLocation = msStringConcatenate(xsi_schemaLocation, msOWSGetInspireSchemasLocation(map));
+    xsi_schemaLocation = msStringConcatenate(xsi_schemaLocation, MS_INSPIRE_DLS_SCHEMA_LOCATION);
+  }
 
   xmlNewNsProp(psRootNode, psXsiNs, BAD_CAST "schemaLocation", BAD_CAST xsi_schemaLocation);
 
@@ -2009,12 +2088,18 @@ static void msWCSCommon20_CreateDomainSet(layerObj* layer, wcs20coverageMetadata
 {
   xmlNodePtr psDomainSet, psGrid, psLimits, psGridEnvelope, psOrigin,
              psOffsetX, psOffsetY;
-  char low[100], high[100], id[100], point[100], resx[100], resy[100], axisLabels[100];
+  char low[100], high[100], id[100], point[100];
+  char offsetVector1[100], offsetVector2[100], axisLabels[100];
 
   psDomainSet = xmlNewChild( psRoot, psGmlNs, BAD_CAST "domainSet", NULL);
   {
     psGrid = xmlNewChild(psDomainSet, psGmlNs, BAD_CAST "RectifiedGrid", NULL);
     {
+      double x0 = cm->geotransform[0]+cm->geotransform[1]/2+cm->geotransform[2]/2;
+      double y0 = cm->geotransform[3]+cm->geotransform[4]/2+cm->geotransform[5]/2;
+      double resx = cm->geotransform[1];
+      double resy = cm->geotransform[5];
+
       xmlNewProp(psGrid, BAD_CAST "dimension", BAD_CAST "2");
       snprintf(id, sizeof(id), "grid_%s", layer->name);
       xmlNewNsProp(psGrid, psGmlNs, BAD_CAST "id", BAD_CAST id);
@@ -2032,17 +2117,9 @@ static void msWCSCommon20_CreateDomainSet(layerObj* layer, wcs20coverageMetadata
       }
 
       if(projection->proj != NULL && pj_is_latlong(projection->proj)) {
-        if (swapAxes == MS_FALSE) {
-          strlcpy(axisLabels, "long lat", sizeof(axisLabels));
-        } else {
-          strlcpy(axisLabels, "lat long", sizeof(axisLabels));
-        }
+        strlcpy(axisLabels, "long lat", sizeof(axisLabels));
       } else {
-        if (swapAxes == MS_FALSE) {
-          strlcpy(axisLabels, "x y", sizeof(axisLabels));
-        } else {
-          strlcpy(axisLabels, "y x", sizeof(axisLabels));
-        }
+        strlcpy(axisLabels, "x y", sizeof(axisLabels));
       }
 
       xmlNewChild(psGrid, psGmlNs, BAD_CAST "axisLabels", BAD_CAST axisLabels);
@@ -2050,9 +2127,9 @@ static void msWCSCommon20_CreateDomainSet(layerObj* layer, wcs20coverageMetadata
       psOrigin = xmlNewChild(psGrid, psGmlNs, BAD_CAST "origin", NULL);
       {
         if (swapAxes == MS_FALSE) {
-          snprintf(point, sizeof(point), "%f %f", cm->extent.minx, cm->extent.maxy);
+          snprintf(point, sizeof(point), "%f %f", x0, y0);
         } else {
-          snprintf(point, sizeof(point), "%f %f", cm->extent.maxy, cm->extent.minx);
+          snprintf(point, sizeof(point), "%f %f", y0, x0);
         }
         psOrigin = xmlNewChild(psOrigin, psGmlNs, BAD_CAST "Point", NULL);
         snprintf(id, sizeof(id), "grid_origin_%s", layer->name);
@@ -2063,14 +2140,14 @@ static void msWCSCommon20_CreateDomainSet(layerObj* layer, wcs20coverageMetadata
       }
 
       if (swapAxes == MS_FALSE) {
-        snprintf(resx, sizeof(resx), "%f 0", cm->xresolution);
-        snprintf(resy, sizeof(resy), "0 %f", -fabs(cm->yresolution));
+        snprintf(offsetVector1, sizeof(offsetVector1), "%f 0", resx);
+        snprintf(offsetVector2, sizeof(offsetVector2), "0 %f", resy);
       } else {
-        snprintf(resx, sizeof(resx), "0 %f", cm->xresolution);
-        snprintf(resy, sizeof(resy), "%f 0", -fabs(cm->yresolution));
+        snprintf(offsetVector1, sizeof(offsetVector1), "0 %f", resx);
+        snprintf(offsetVector2, sizeof(offsetVector2), "%f 0", resy);
       }
-      psOffsetX = xmlNewChild(psGrid, psGmlNs, BAD_CAST "offsetVector", BAD_CAST resx);
-      psOffsetY = xmlNewChild(psGrid, psGmlNs, BAD_CAST "offsetVector", BAD_CAST resy);
+      psOffsetX = xmlNewChild(psGrid, psGmlNs, BAD_CAST "offsetVector", BAD_CAST offsetVector1);
+      psOffsetY = xmlNewChild(psGrid, psGmlNs, BAD_CAST "offsetVector", BAD_CAST offsetVector2);
 
       xmlNewProp(psOffsetX, BAD_CAST "srsName", BAD_CAST cm->srs_uri);
       xmlNewProp(psOffsetY, BAD_CAST "srsName", BAD_CAST cm->srs_uri);
@@ -2281,6 +2358,7 @@ static int msWCSWriteFile20(mapObj* map, imageObj* image, wcs20ParamsObjPtr para
   /*      output a single "stock" filename.                               */
   /* -------------------------------------------------------------------- */
   if( filename == NULL ) {
+    msOutputFormatResolveFromImage( map, image );
     if(multipart) {
       msIO_fprintf( stdout, "\r\n--wcs\r\n" );
       msIO_fprintf(
@@ -2441,7 +2519,8 @@ static int msWCSWriteFile20(mapObj* map, imageObj* image, wcs20ParamsObjPtr para
 static const char *msWCSLookupRangesetAxisMetadata20(hashTableObj *table,
     const char *axis, const char *item)
 {
-  char buf[500], *value;
+  char buf[500];
+  const char* value;
 
   if(table == NULL || axis == NULL || item == NULL) {
     return NULL;
@@ -2471,10 +2550,11 @@ static int msWCSGetCoverageMetadata20(layerObj *layer, wcs20coverageMetadataObj 
   if ( msCheckParentPointer(layer->map,"map") == MS_FAILURE )
     return MS_FAILURE;
 
-  if((cm->srs = msOWSGetEPSGProj(&(layer->projection),
-                                 &(layer->metadata), "CO", MS_TRUE)) == NULL) {
-    if((cm->srs = msOWSGetEPSGProj(&(layer->map->projection),
-                                   &(layer->map->web.metadata), "CO", MS_TRUE)) == NULL) {
+  msOWSGetEPSGProj(&(layer->projection), &(layer->metadata), "CO", MS_TRUE, &(cm->srs_epsg));
+  if(!cm->srs_epsg) {
+    msOWSGetEPSGProj(&(layer->map->projection),
+                                   &(layer->map->web.metadata), "CO", MS_TRUE, &cm->srs_epsg);
+    if(!cm->srs_epsg) {
       msSetError(MS_WCSERR, "Unable to determine the SRS for this layer, "
                  "no projection defined and no metadata available.",
                  "msWCSGetCoverageMetadata20()");
@@ -2683,7 +2763,26 @@ static int msWCSGetCoverageMetadata20(layerObj *layer, wcs20coverageMetadataObj 
       } else if( (value = msOWSLookupMetadata(&(layer->metadata), "CO", wcs11_band_names_key)) != NULL ) {
         keys = wcs11_keys;
         interval_key = wcs11_interval_key;
-        band_names = msStringSplit(value, ' ', &num_band_names);
+        /* "bands" has a special processing in WCS 1.0. See */
+        /* msWCSSetDefaultBandsRangeSetInfo */
+        if( EQUAL(value, "bands") )
+        {
+            num_band_names = cm->numbands;
+            band_names = (char**) msSmallMalloc( sizeof(char*) * num_band_names );
+            for( i = 0; i < num_band_names; i++ )
+            {
+                char szName[30];
+                snprintf(szName, sizeof(szName), "Band%d", i+1);
+                band_names[i] = msStrdup(szName);
+            }
+        }
+        else
+        {
+            /* WARNING: in WCS 1.x,, "rangeset_axes" has never been intended */
+            /* to contain the list of band names... This code should probably */
+            /* be removed */
+            band_names = msStringSplit(value, ' ', &num_band_names);
+        }
       }
 
       /* return with error when number of bands does not match    */
@@ -2707,7 +2806,6 @@ static int msWCSGetCoverageMetadata20(layerObj *layer, wcs20coverageMetadataObj 
       /* set default values for interval and significant figures */
       switch(cm->imagemode) {
         case MS_IMAGEMODE_BYTE:
-        case MS_IMAGEMODE_PC256:
           default_values.interval_min = 0.;
           default_values.interval_max = 255.;
           default_values.significant_figures = 3;
@@ -2721,6 +2819,11 @@ static int msWCSGetCoverageMetadata20(layerObj *layer, wcs20coverageMetadataObj 
           default_values.interval_min = -FLT_MAX;
           default_values.interval_max = FLT_MAX;
           default_values.significant_figures = 12;
+          break;
+        default:
+          // other imagemodes are invalid (see above), just keep the compiler happy
+          msFreeCharArray(band_names, num_band_names);
+          return MS_FAILURE;
           break;
       }
 
@@ -2951,6 +3054,7 @@ static int msWCSClearCoverageMetadata20(wcs20coverageMetadataObj *cm)
     }
   }
   msFree(cm->bands);
+  msFree(cm->srs_epsg);
   return MS_SUCCESS;
 }
 
@@ -3168,6 +3272,55 @@ static int msWCSGetCapabilities20_CoverageSummary(
   return MS_SUCCESS;
 }
 
+
+/************************************************************************/
+/*                          msWCSAddInspireDSID20                       */
+/************************************************************************/
+
+static void msWCSAddInspireDSID20(mapObj *map,
+                                  xmlNsPtr psNsInspireDls,
+                                  xmlNsPtr psNsInspireCommon,
+                                  xmlNodePtr pDlsExtendedCapabilities)
+{
+    const char* dsid_code = msOWSLookupMetadata(&(map->web.metadata), "CO", "inspire_dsid_code");
+    const char* dsid_ns = msOWSLookupMetadata(&(map->web.metadata), "CO", "inspire_dsid_ns");
+    if( dsid_code == NULL )
+    {
+        xmlAddChild(pDlsExtendedCapabilities, xmlNewComment(BAD_CAST "WARNING: Required metadata \"inspire_dsid_code\" missing"));
+    }
+    else
+    {
+        int ntokensCode = 0, ntokensNS = 0;
+        char** tokensCode;
+        char** tokensNS = NULL;
+        int i;
+
+        tokensCode = msStringSplit(dsid_code, ',', &ntokensCode);
+        if( dsid_ns != NULL )
+            tokensNS = msStringSplitComplex( dsid_ns, ",", &ntokensNS, MS_ALLOWEMPTYTOKENS);
+        if( ntokensNS > 0 && ntokensNS != ntokensCode )
+        {
+            xmlAddChild(pDlsExtendedCapabilities,
+                        xmlNewComment(BAD_CAST "WARNING: \"inspire_dsid_code\" and \"inspire_dsid_ns\" have not the same number of elements. Ignoring inspire_dsid_ns"));
+            msFreeCharArray(tokensNS, ntokensNS);
+            tokensNS = NULL;
+            ntokensNS = 0;
+        }
+        for(i = 0; i<ntokensCode; i++ )
+        {
+            xmlNodePtr pSDSI = xmlNewNode(psNsInspireDls, BAD_CAST "SpatialDataSetIdentifier");
+            xmlAddChild(pDlsExtendedCapabilities, pSDSI);
+            xmlNewTextChild(pSDSI, psNsInspireCommon, BAD_CAST "Code", BAD_CAST tokensCode[i]);
+            if( ntokensNS > 0 && tokensNS[i][0] != '\0' )
+                xmlNewTextChild(pSDSI, psNsInspireCommon, BAD_CAST "Namespace", BAD_CAST tokensNS[i]);
+        }
+        msFreeCharArray(tokensCode, ntokensCode);
+        if( ntokensNS > 0 )
+            msFreeCharArray(tokensNS, ntokensNS);
+    }
+}
+
+
 /************************************************************************/
 /*                   msWCSGetCapabilities20()                           */
 /*                                                                      */
@@ -3191,6 +3344,11 @@ int msWCSGetCapabilities20(mapObj *map, cgiRequestObj *req,
            psIntNs = NULL;
   char *script_url=NULL, *script_url_encoded=NULL, *format_list=NULL;
   int i;
+  xmlDocPtr pInspireTmpDoc = NULL;
+
+  const char *inspire_capabilities = msOWSLookupMetadata(&(map->web.metadata), "CO", "inspire_capabilities");
+
+  char *validated_language = msOWSLanguageNegotiation(map, "CO", params->accept_languages, CSLCount(params->accept_languages));
 
   /* -------------------------------------------------------------------- */
   /*      Create document.                                                */
@@ -3205,7 +3363,7 @@ int msWCSGetCapabilities20(mapObj *map, cgiRequestObj *req,
   /*      Name spaces                                                     */
   /* -------------------------------------------------------------------- */
 
-  msWCSPrepareNamespaces20(psDoc, psRootNode, map);
+  msWCSPrepareNamespaces20(psDoc, psRootNode, map, inspire_capabilities != NULL);
 
   /* lookup namespaces */
   psOwsNs = xmlSearchNs( psDoc, psRootNode, BAD_CAST MS_OWSCOMMON_OWS_NAMESPACE_PREFIX );
@@ -3246,14 +3404,14 @@ int msWCSGetCapabilities20(mapObj *map, cgiRequestObj *req,
   /* -------------------------------------------------------------------- */
   if ( MS_WCS_20_CAPABILITIES_INCLUDE_SECTION(params, "ServiceIdentification") ) {
     psNode = xmlAddChild(psRootNode, msOWSCommonServiceIdentification(
-                           psOwsNs, map, "OGC WCS", "2.0.1,1.1.1,1.0.0", "CO", NULL));
+                           psOwsNs, map, "OGC WCS", "2.0.1,1.1.1,1.0.0", "CO", validated_language));
     msWCSGetCapabilities20_CreateProfiles(map, psNode, psOwsNs);
   }
 
   /* Service Provider */
   if ( MS_WCS_20_CAPABILITIES_INCLUDE_SECTION(params, "ServiceProvider") ) {
     xmlAddChild(psRootNode,
-                msOWSCommonServiceProvider(psOwsNs, psXLinkNs, map, "CO", NULL));
+                msOWSCommonServiceProvider(psOwsNs, psXLinkNs, map, "CO", validated_language));
   }
 
   /* -------------------------------------------------------------------- */
@@ -3309,6 +3467,62 @@ int msWCSGetCapabilities20(mapObj *map, cgiRequestObj *req,
       xmlAddChild(psOperationsNode, psNode);
     }
     msFree(script_url_encoded);
+
+
+    /* -------------------------------------------------------------------- */
+    /*      Extended Capabilities for inspire                               */
+    /* -------------------------------------------------------------------- */
+
+    if (inspire_capabilities) {
+      msIOContext* old_context;
+      msIOContext* new_context;
+      msIOBuffer* buffer;
+
+      xmlNodePtr pRoot;
+      xmlNodePtr pOWSExtendedCapabilities;
+      xmlNodePtr pDlsExtendedCapabilities;
+      xmlNodePtr pChild;
+
+      xmlNsPtr psInspireCommonNs = xmlSearchNs( psDoc, psRootNode, BAD_CAST MS_INSPIRE_COMMON_NAMESPACE_PREFIX );
+      xmlNsPtr psInspireDlsNs = xmlSearchNs( psDoc, psRootNode, BAD_CAST MS_INSPIRE_DLS_NAMESPACE_PREFIX );
+
+
+      old_context = msIO_pushStdoutToBufferAndGetOldContext();
+      msOWSPrintInspireCommonExtendedCapabilities(stdout, map, "CO", OWS_WARN,
+                                                  "foo",
+                                                  "xmlns:" MS_INSPIRE_COMMON_NAMESPACE_PREFIX "=\"" MS_INSPIRE_COMMON_NAMESPACE_URI "\" "
+                                                  "xmlns:" MS_INSPIRE_DLS_NAMESPACE_PREFIX "=\"" MS_INSPIRE_DLS_NAMESPACE_URI "\" "
+                                                  "xmlns:xsi=\"" MS_OWSCOMMON_W3C_XSI_NAMESPACE_URI "\"", validated_language, OWS_WCS);
+
+      new_context = msIO_getHandler(stdout);
+      buffer = (msIOBuffer *) new_context->cbData;
+
+      /* Remove spaces between > and < to get properly indented result */
+      msXMLStripIndentation( (char*) buffer->data );
+
+      pInspireTmpDoc = xmlParseDoc((const xmlChar *)buffer->data);
+      pRoot = xmlDocGetRootElement(pInspireTmpDoc);
+      xmlReconciliateNs(psDoc, pRoot);
+
+      pOWSExtendedCapabilities = xmlNewNode(psOwsNs, BAD_CAST "ExtendedCapabilities");
+      xmlAddChild(psOperationsNode, pOWSExtendedCapabilities);
+
+      pDlsExtendedCapabilities = xmlNewNode(psInspireDlsNs, BAD_CAST "ExtendedCapabilities");
+      xmlAddChild(pOWSExtendedCapabilities, pDlsExtendedCapabilities);
+
+      pChild = pRoot->children;
+      while(pChild != NULL)
+      {
+          xmlNodePtr pNext = pChild->next;
+          xmlUnlinkNode(pChild);
+          xmlAddChild(pDlsExtendedCapabilities, pChild);
+          pChild = pNext;
+      }
+
+      msWCSAddInspireDSID20(map, psInspireDlsNs, psInspireCommonNs, pDlsExtendedCapabilities);
+
+      msIO_restoreOldStdoutContext(old_context);
+    }
   }
 
   /* -------------------------------------------------------------------- */
@@ -3395,7 +3609,10 @@ int msWCSGetCapabilities20(mapObj *map, cgiRequestObj *req,
   /*      Write out the document and clean up.                            */
   /* -------------------------------------------------------------------- */
   msWCSWriteDocument20(map, psDoc);
+  msFree(validated_language);
   xmlFreeDoc(psDoc);
+  if( pInspireTmpDoc )
+    xmlFreeDoc(pInspireTmpDoc);
   xmlCleanupParser();
   return MS_SUCCESS;
 }
@@ -3568,7 +3785,7 @@ int msWCSDescribeCoverage20(mapObj *map, wcs20ParamsObjPtr params, owsRequestObj
   xmlDocSetRootElement(psDoc, psRootNode);
 
   /* prepare initial namespace definitions */
-  msWCSPrepareNamespaces20(psDoc, psRootNode, map);
+  msWCSPrepareNamespaces20(psDoc, psRootNode, map, MS_FALSE);
 
   psWcsNs = xmlSearchNs(psDoc, psRootNode,
                         BAD_CAST MS_OWSCOMMON_WCS_NAMESPACE_PREFIX);
@@ -3735,7 +3952,6 @@ static int msWCSGetCoverage20_GetBands(mapObj *map, layerObj *layer,
                                        wcs20ParamsObjPtr params, wcs20coverageMetadataObjPtr cm, char **bandlist)
 {
   int i = 0, count, maxlen, index;
-  char *tmp = NULL;
   char *interval_stop;
   char **band_ids = NULL;
 
@@ -3743,28 +3959,56 @@ static int msWCSGetCoverage20_GetBands(mapObj *map, layerObj *layer,
   if(NULL == params->range_subset) {
     *bandlist = msStrdup("1");
     for(i = 1; i < cm->numbands; ++i) {
-      char strnumber[10];
+      char strnumber[12];
       snprintf(strnumber, sizeof(strnumber), ",%d", i + 1);
       *bandlist = msStringConcatenate(*bandlist, strnumber);
     }
     return MS_SUCCESS;
   }
 
-  count = CSLCount(params->range_subset);
   maxlen = cm->numbands * 4 * sizeof(char);
   *bandlist = msSmallCalloc(sizeof(char), maxlen);
 
-  if (NULL == (tmp = msOWSGetEncodeMetadata(&layer->metadata,
-                     "CO", "rangeset_axes", NULL))) {
-    tmp = msOWSGetEncodeMetadata(&layer->metadata,
-                                 "CO", "band_names", NULL);
-  }
+  /* Use WCS 2.0 metadata items in priority */
+  {
+    char* tmp = msOWSGetEncodeMetadata(&layer->metadata,
+                               "CO", "band_names", NULL);
 
-  if(NULL != tmp) {
-    band_ids = CSLTokenizeString2(tmp, " ", 0);
+    if( NULL == tmp ) {
+      /* Otherwise default to WCS 1.x*/
+      tmp = msOWSGetEncodeMetadata(&layer->metadata,
+                     "CO", "rangeset_axes", NULL);
+      /* "bands" has a special processing in WCS 1.0. See */
+      /* msWCSSetDefaultBandsRangeSetInfo */
+      if( tmp != NULL && EQUAL(tmp, "bands") )
+      {
+        int num_band_names = cm->numbands;
+        band_ids = (char**) msSmallCalloc( sizeof(char*), (num_band_names + 1) );
+        for( i = 0; i < num_band_names; i++ )
+        {
+            char szName[30];
+            snprintf(szName, sizeof(szName), "Band%d", i+1);
+            band_ids[i] = msStrdup(szName);
+        }
+      }
+    }
+
+    if(NULL != tmp && band_ids == NULL) {
+      band_ids = CSLTokenizeString2(tmp, " ", 0);
+    }
     msFree(tmp);
   }
 
+  /* If we still don't have band names, use the band names from the coverage metadata */
+  if (band_ids == NULL) {
+    band_ids = (char**) CPLCalloc(sizeof(char*), (cm->numbands + 1));
+    for (i = 0; i < cm->numbands; ++i) {
+      band_ids[i] = CPLStrdup(cm->bands[i].name);
+    }
+  }
+
+  /* Iterate over all supplied range */
+  count = CSLCount(params->range_subset);
   for(i = 0; i < count; ++i) {
     /* RangeInterval case: defined as "<start>:<stop>" */
     if ((interval_stop = strchr(params->range_subset[i], ':')) != NULL) {
@@ -3811,6 +4055,7 @@ static int msWCSGetCoverage20_GetBands(mapObj *map, layerObj *layer,
 
       /* expand the interval to a list of indices and push them on the list */
       for (j = start; j <= stop; ++j) {
+        char* tmp;
         if(i != 0 || j != start) {
           strlcat(*bandlist, ",", maxlen);
         }
@@ -3827,6 +4072,7 @@ static int msWCSGetCoverage20_GetBands(mapObj *map, layerObj *layer,
 
       /* check if the string represents an integer */
       if(msStringParseInteger(params->range_subset[i], &index) == MS_SUCCESS) {
+        char* tmp;
         if (index < 1 || index > cm->numbands) {
           msSetError(MS_WCSERR, "Band index is out of the valid range: 1-%d",
                  "msWCSGetCoverage20_GetBands()", (int)cm->numbands);
@@ -3842,7 +4088,7 @@ static int msWCSGetCoverage20_GetBands(mapObj *map, layerObj *layer,
       /* check if the string is equal to a band identifier    */
       /* if so, what is the index of the band                 */
       if((index = CSLFindString(band_ids, params->range_subset[i])) != -1) {
-        tmp = msIntToString((int)index + 1);
+        char* tmp = msIntToString((int)index + 1);
         strlcat(*bandlist, tmp, maxlen);
         msFree(tmp);
       }
@@ -4072,7 +4318,13 @@ int msWCSGetCoverage20(mapObj *map, cgiRequestObj *request,
 
   int status, i;
   double x_1, x_2, y_1, y_2;
-  char *coverageName, *bandlist=NULL, numbands[8];
+  char *coverageName, *bandlist=NULL, numbands[12];
+
+  int doDrawRasterLayerDraw = MS_TRUE;
+  GDALDatasetH hDS = NULL;
+
+  int widthFromComputationInImageCRS = 0;
+  int heightFromComputationInImageCRS = 0;
 
   /* number of coverage ids should be 1 */
   if (params->ids == NULL || params->ids[0] == NULL) {
@@ -4132,12 +4384,12 @@ this request. Check wcs/ows_enable_request settings.", "msWCSGetCoverage20()", p
   /************************************************************************/
 
   msInitProjection(&imageProj);
-  if (msLoadProjectionString(&imageProj, cm.srs) == -1) {
+  if (msLoadProjectionString(&imageProj, cm.srs_epsg) == -1) {
     msFreeProjection(&imageProj);
     msWCSClearCoverageMetadata20(&cm);
     msSetError(MS_WCSERR,
                "Error loading CRS %s.",
-               "msWCSGetCoverage20()", cm.srs);
+               "msWCSGetCoverage20()", cm.srs_epsg);
     return msWCSException(map, "InvalidParameterValue",
                           "projection", params->version);
   }
@@ -4185,7 +4437,7 @@ this request. Check wcs/ows_enable_request settings.", "msWCSGetCoverage20()", p
   /* if no subsetCRS was specified use the coverages CRS 
      (Requirement 27 of the WCS 2.0 specification) */
   if (!params->subsetcrs) {
-    params->subsetcrs = msStrdup(cm.srs);
+    params->subsetcrs = msStrdup(cm.srs_epsg);
   }
 
   if(EQUAL(params->subsetcrs, "imageCRS")) {
@@ -4235,6 +4487,42 @@ this request. Check wcs/ows_enable_request settings.", "msWCSGetCoverage20()", p
     }
 
     if(msProjectionsDiffer(&imageProj, &subsetProj)) {
+#ifdef USE_PROJ
+      /* Reprojection of source raster extent of (-180,-90,180,90) to any */
+      /* projected CRS is going to exhibit strong anomalies. So instead */
+      /* do the reverse, project the subset extent to the layer CRS, and */
+      /* see how much the subset extent takes with respect to the source */
+      /* raster extent. This is only used if output width and resolutionX (or */
+      /* (height and resolutionY) are unknown. */
+      if( ((params->width == 0 && params->resolutionX == MS_WCS20_UNBOUNDED) ||
+           (params->height == 0 && params->resolutionY == MS_WCS20_UNBOUNDED)) &&
+          (pj_is_latlong(imageProj.proj) &&
+           !pj_is_latlong(subsetProj.proj) &&
+           fabs(layer->extent.minx - -180.0) < 1e-5 &&
+           fabs(layer->extent.miny - -90.0) < 1e-5 &&
+           fabs(layer->extent.maxx - 180.0) < 1e-5 &&
+           fabs(layer->extent.maxy - 90.0) < 1e-5) )
+      {
+          rectObj subsetInImageProj = subsets;
+          if( msProjectRect(&subsetProj, &imageProj, &(subsetInImageProj)) == MS_SUCCESS )
+          {
+            subsetInImageProj.minx = MS_MAX(subsetInImageProj.minx, layer->extent.minx);
+            subsetInImageProj.miny = MS_MAX(subsetInImageProj.miny, layer->extent.miny);
+            subsetInImageProj.maxx = MS_MIN(subsetInImageProj.maxx, layer->extent.maxx);
+            subsetInImageProj.maxy = MS_MIN(subsetInImageProj.maxy, layer->extent.maxy);
+            {
+                double total = ABS(layer->extent.maxx - layer->extent.minx);
+                double part = ABS(subsetInImageProj.maxx - subsetInImageProj.minx);
+                widthFromComputationInImageCRS = MS_NINT((part * map->width) / total);
+            }
+            {
+                double total = ABS(layer->extent.maxy - layer->extent.miny);
+                double part = ABS(subsetInImageProj.maxy - subsetInImageProj.miny);
+                heightFromComputationInImageCRS = MS_NINT((part * map->height) / total);
+            }
+          }
+      }
+#endif
       msProjectRect(&imageProj, &subsetProj, &(layer->extent));
       map->extent = layer->extent;
       msFreeProjection(&(map->projection));
@@ -4285,7 +4573,9 @@ this request. Check wcs/ows_enable_request settings.", "msWCSGetCoverage20()", p
   } else if(params->resolutionX != MS_WCS20_UNBOUNDED) {
     params->width = MS_NINT((bbox.maxx - bbox.minx) / params->resolutionX);
   } else {
-    if(ABS(bbox.maxx - bbox.minx) != ABS(map->extent.maxx - map->extent.minx)) {
+    if( widthFromComputationInImageCRS != 0 ) {
+      params->width = widthFromComputationInImageCRS;
+    } else if(ABS(bbox.maxx - bbox.minx) != ABS(map->extent.maxx - map->extent.minx)) {
       double total = ABS(map->extent.maxx - map->extent.minx),
              part = ABS(bbox.maxx - bbox.minx);
       params->width = MS_NINT((part * map->width) / total);
@@ -4307,7 +4597,9 @@ this request. Check wcs/ows_enable_request settings.", "msWCSGetCoverage20()", p
   } else if(params->resolutionY != MS_WCS20_UNBOUNDED) {
     params->height = MS_NINT((bbox.maxy - bbox.miny) / params->resolutionY);
   } else {
-    if(ABS(bbox.maxy - bbox.miny) != ABS(map->extent.maxy - map->extent.miny)) {
+    if( heightFromComputationInImageCRS != 0 ) {
+      params->height = heightFromComputationInImageCRS;
+    } else if(ABS(bbox.maxy - bbox.miny) != ABS(map->extent.maxy - map->extent.miny)) {
       double total = ABS(map->extent.maxy - map->extent.miny),
              part = ABS(bbox.maxy - bbox.miny);
       params->height = MS_NINT((part * map->height) / total);
@@ -4449,6 +4741,8 @@ this request. Check wcs/ows_enable_request settings.", "msWCSGetCoverage20()", p
   snprintf(numbands, sizeof(numbands), "%d", msCountChars(bandlist, ',')+1);
   msSetOutputFormatOption(map->outputformat, "BAND_COUNT", numbands);
 
+  msWCSApplyLayerCreationOptions(layer, map->outputformat, bandlist);
+
   /* check for the interpolation */
   /* Defaults to NEAREST */
   if(params->interpolation != NULL) {
@@ -4477,12 +4771,33 @@ this request. Check wcs/ows_enable_request settings.", "msWCSGetCoverage20()", p
     msLayerSetProcessingKey(layer, "CLOSE_CONNECTION", "NORMAL");
   }
 
+  if( layer->tileindex == NULL && layer->data != NULL &&
+      strlen(layer->data) > 0 &&
+      layer->connectiontype != MS_KERNELDENSITY )
+  {
+      if( msDrawRasterLayerLowCheckIfMustDraw(map, layer) )
+      {
+          char* decrypted_path = NULL;
+          char szPath[MS_MAXPATHLEN];
+          hDS = (GDALDatasetH)msDrawRasterLayerLowOpenDataset(
+                                    map, layer, layer->data, szPath, &decrypted_path);
+          msFree(decrypted_path);
+          if( hDS )
+            msWCSApplyDatasetMetadataAsCreationOptions(layer, map->outputformat, bandlist, hDS);
+      }
+      else
+      {
+          doDrawRasterLayerDraw = MS_FALSE;
+      }
+  }
+
   /* create the image object  */
   if (!map->outputformat) {
     msWCSClearCoverageMetadata20(&cm);
     msFree(bandlist);
     msSetError(MS_WCSERR, "The map outputformat is missing!",
                "msWCSGetCoverage20()");
+    msDrawRasterLayerLowCloseDataset(layer, hDS);
     return msWCSException(map, NULL, NULL, params->version);
   } else if (MS_RENDERER_PLUGIN(map->outputformat)) {
     image = msImageCreate(map->width, map->height, map->outputformat,
@@ -4497,12 +4812,14 @@ this request. Check wcs/ows_enable_request settings.", "msWCSGetCoverage20()", p
     msWCSClearCoverageMetadata20(&cm);
     msSetError(MS_WCSERR, "Map outputformat not supported for WCS!",
                "msWCSGetCoverage20()");
+    msDrawRasterLayerLowCloseDataset(layer, hDS);
     return msWCSException(map, NULL, NULL, params->version);
   }
 
   if (image == NULL) {
     msFree(bandlist);
     msWCSClearCoverageMetadata20(&cm);
+    msDrawRasterLayerLowCloseDataset(layer, hDS);
     return msWCSException(map, NULL, NULL, params->version);
   }
 
@@ -4516,6 +4833,7 @@ this request. Check wcs/ows_enable_request settings.", "msWCSGetCoverage20()", p
       msFreeImage(image);
       msFree(bandlist);
       msWCSClearCoverageMetadata20(&cm);
+      msDrawRasterLayerLowCloseDataset(layer, hDS);
       return msWCSException(map, NULL, NULL, params->version);
     }
     maskLayer = GET_LAYER(map, maskLayerIdx);
@@ -4533,6 +4851,7 @@ this request. Check wcs/ows_enable_request settings.", "msWCSGetCoverage20()", p
         msFreeImage(image);
         msFree(bandlist);
         msWCSClearCoverageMetadata20(&cm);
+        msDrawRasterLayerLowCloseDataset(layer, hDS);
         return msWCSException(map, NULL, NULL, params->version);
       }
 
@@ -4555,6 +4874,7 @@ this request. Check wcs/ows_enable_request settings.", "msWCSGetCoverage20()", p
         msFreeImage(image);
         msFree(bandlist);
         msWCSClearCoverageMetadata20(&cm);
+        msDrawRasterLayerLowCloseDataset(layer, hDS);
         return msWCSException(map, NULL, NULL, params->version);
       }
       /*
@@ -4581,13 +4901,24 @@ this request. Check wcs/ows_enable_request settings.", "msWCSGetCoverage20()", p
 
   /* Actually produce the "grid". */
   if( MS_RENDERER_RAWDATA(map->outputformat) ) {
-    status = msDrawRasterLayerLow( map, layer, image, NULL );
+    if( doDrawRasterLayerDraw ) {
+      status = msDrawRasterLayerLowWithDataset( map, layer, image, NULL, hDS );
+    } else {
+      status = MS_SUCCESS;
+    }
   } else {
     rasterBufferObj rb;
     status = MS_IMAGE_RENDERER(image)->getRasterBufferHandle(image,&rb);
-    if(LIKELY(status == MS_SUCCESS))
-      status = msDrawRasterLayerLow( map, layer, image, &rb );
+    if(LIKELY(status == MS_SUCCESS)) {
+      if( doDrawRasterLayerDraw ) {
+        status = msDrawRasterLayerLowWithDataset( map, layer, image, &rb, hDS );
+      } else {
+        status = MS_SUCCESS;
+      }
+    }
   }
+
+  msDrawRasterLayerLowCloseDataset(layer, hDS);
 
   if( status != MS_SUCCESS ) {
     msFree(bandlist);
@@ -4616,7 +4947,7 @@ this request. Check wcs/ows_enable_request settings.", "msWCSGetCoverage20()", p
     psRootNode = xmlNewNode(NULL, BAD_CAST MS_WCS_GML_COVERAGETYPE_RECTIFIED_GRID_COVERAGE);
     xmlDocSetRootElement(psDoc, psRootNode);
 
-    msWCSPrepareNamespaces20(psDoc, psRootNode, map);
+    msWCSPrepareNamespaces20(psDoc, psRootNode, map, MS_FALSE);
 
     psGmlNs    = xmlSearchNs(psDoc, psRootNode, BAD_CAST MS_OWSCOMMON_GML_NAMESPACE_PREFIX);
     psGmlcovNs = xmlSearchNs(psDoc, psRootNode, BAD_CAST MS_OWSCOMMON_GMLCOV_NAMESPACE_PREFIX);

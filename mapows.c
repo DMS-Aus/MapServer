@@ -82,12 +82,12 @@ static void msOWSClearRequestObj(owsRequestObj *ows_request)
 }
 
 #if defined(USE_LIBXML2) && LIBXML_VERSION < 20900
-static int bExternalEntityAsked = FALSE;
+static int bExternalEntityAsked = MS_FALSE;
 static xmlParserInputPtr  dummyEntityLoader(const char * URL, 
                                            const char * ID, 
                                            xmlParserCtxtPtr context )
 {
-    bExternalEntityAsked = TRUE;
+    bExternalEntityAsked = MS_TRUE;
     return NULL;
 }
 #endif
@@ -149,7 +149,7 @@ static int msOWSPreParseRequest(cgiRequestObj *request,
     oldExternalEntityLoader = xmlGetExternalEntityLoader();
     /* to avoid  XML External Entity vulnerability with libxml2 < 2.9 */
     xmlSetExternalEntityLoader (dummyEntityLoader); 
-    bExternalEntityAsked = FALSE;
+    bExternalEntityAsked = MS_FALSE;
 #endif
     /* parse to DOM-Structure with libxml2 and get the root element */
     ows_request->document = xmlParseMemory(request->postrequest,
@@ -264,7 +264,11 @@ int msOWSDispatch(mapObj *map, cgiRequestObj *request, int ows_mode)
   }
 
   if (ows_request.service == NULL) {
-
+    if (ows_request.request && EQUAL(ows_request.request, "GetMetadata")) {
+      status = msMetadataDispatch(map, request, &ows_request);
+      msOWSClearRequestObj(&ows_request);
+      return status;
+    }
 #ifdef USE_WFS_SVR
     if( msOWSLookupMetadata(&(map->web.metadata), "FO", "cite_wfs2") != NULL ) {
       status = msWFSException(map, "service", MS_OWS_ERROR_MISSING_PARAMETER_VALUE, NULL );
@@ -1298,6 +1302,46 @@ char *msOWSGetLanguageFromList(mapObj *map, const char *namespaces, const char *
   return language;
 }
 
+
+/* msOWSLanguageNegotiation
+**
+** Returns a language according to the accepted languages requested by the client
+**
+** Returns a malloced char* which must be freed by the caller, or NULL
+*/
+char *msOWSLanguageNegotiation(mapObj *map, const char *namespaces, char **accept_languages, int num_accept_languages)
+{
+  int num_languages = 0;
+  char **languages = NULL;
+  char *result_language = NULL;
+
+  languages = msOWSGetLanguageList(map, namespaces, &num_languages);
+
+  if (languages && num_languages > 0) {
+    int i;
+    for (i = 0; i < num_accept_languages; ++i) {
+      const char *accept_language = accept_languages[i];
+
+      /* '*' means any language */
+      if (EQUAL(accept_language, "*")) {
+        result_language = msStrdup(languages[0]);
+        break;
+      } else if (msStringInArray(accept_language, languages, num_languages)) {
+        result_language = msStrdup(accept_language);
+        break;
+      }
+    }
+
+    if (result_language == NULL) {
+      result_language = msStrdup(languages[0]);
+    }
+  }
+
+  msFreeCharArray(languages, num_languages);
+  return result_language;
+}
+
+
 /* msOWSPrintInspireCommonExtendedCapabilities
 **
 ** Output INSPIRE common extended capabilities items to stream
@@ -1381,7 +1425,7 @@ int msOWSPrintInspireCommonMetadata(FILE *stream, mapObj *map, const char *names
     msOWSPrintEncodeMetadata(stream, &(map->web.metadata), namespaces, "inspire_mpoc_email", OWS_WARN, "      <inspire_common:EmailAddress>%s</inspire_common:EmailAddress>\n", "");
     msIO_fprintf(stream, "    </inspire_common:MetadataPointOfContact>\n");
     msOWSPrintEncodeMetadata(stream, &(map->web.metadata), namespaces, "inspire_metadatadate", OWS_WARN, "      <inspire_common:MetadataDate>%s</inspire_common:MetadataDate>\n", "");
-    if( service == OWS_WFS )
+    if( service == OWS_WFS || service == OWS_WCS )
         msIO_fprintf(stream,"    <inspire_common:SpatialDataServiceType>download</inspire_common:SpatialDataServiceType>\n");
     else
         msIO_fprintf(stream,"    <inspire_common:SpatialDataServiceType>view</inspire_common:SpatialDataServiceType>\n");
@@ -1958,6 +2002,7 @@ int msOWSPrintEncodeMetadataList(FILE *stream, hashTableObj *metadata,
 {
   const char *value;
   char *encoded;
+  size_t default_value_len = 0;
 
   value = msOWSLookupMetadata(metadata, namespaces, name);
 
@@ -1965,6 +2010,8 @@ int msOWSPrintEncodeMetadataList(FILE *stream, hashTableObj *metadata,
     value = default_value;
     default_value = NULL;
   }
+  if( default_value )
+      default_value_len = strlen(default_value);
 
   if(value != NULL) {
     char **keywords;
@@ -1976,8 +2023,9 @@ int msOWSPrintEncodeMetadataList(FILE *stream, hashTableObj *metadata,
       if(startTag) msIO_fprintf(stream, "%s", startTag);
       for(kw=0; kw<numkeywords; kw++) {
         if (default_value != NULL
+            && default_value_len > 8
             && strncasecmp(keywords[kw],default_value,strlen(keywords[kw])) == 0
-            && strncasecmp("_exclude",default_value+strlen(default_value)-8,8) == 0)
+            && strncasecmp("_exclude",default_value+default_value_len-8,8) == 0)
           continue;
 
         encoded = msEncodeHTMLEntities(keywords[kw]);
@@ -2129,8 +2177,8 @@ void msOWSPrintBoundingBox(FILE *stream, const char *tabspace,
                            const char *namespaces,
                            int wms_version)
 {
-  const char    *value, *resx, *resy, *wms_bbox_extended, *epsg_str;
-  char *encoded, *encoded_resx, *encoded_resy;
+  const char    *value, *resx, *resy, *wms_bbox_extended;
+  char *encoded, *encoded_resx, *encoded_resy, *epsg_str;
   char **epsgs;
   int i, num_epsgs;
   projectionObj proj;
@@ -2141,18 +2189,19 @@ void msOWSPrintBoundingBox(FILE *stream, const char *tabspace,
     /* get a list of all projections from the metadata
        try the layer metadata first, otherwise use the map's */
     if( msOWSLookupMetadata(layer_meta, namespaces, "srs") ) {
-      epsg_str = msOWSGetEPSGProj(srcproj, layer_meta, namespaces, MS_FALSE);
+      msOWSGetEPSGProj(srcproj, layer_meta, namespaces, MS_FALSE, &epsg_str);
     } else {
-      epsg_str = msOWSGetEPSGProj(srcproj, map_meta, namespaces, MS_FALSE);
+      msOWSGetEPSGProj(srcproj, map_meta, namespaces, MS_FALSE, &epsg_str);
     }
     epsgs = msStringSplit(epsg_str, ' ', &num_epsgs);
+    msFree(epsg_str);
   } else {
     /* Look for EPSG code in PROJECTION block only.  "wms_srs" metadata cannot be
      * used to establish the native projection of a layer for BoundingBox purposes.
      */
     epsgs = (char **) msSmallMalloc(sizeof(char *));
     num_epsgs = 1;
-    epsgs[0] = msStrdup( msOWSGetEPSGProj(srcproj, layer_meta, namespaces, MS_TRUE) );
+    msOWSGetEPSGProj(srcproj, layer_meta, namespaces, MS_TRUE, &(epsgs[0]));
   }
 
   for( i = 0; i < num_epsgs; i++) {
@@ -2495,34 +2544,37 @@ char *msOWSBuildURLFilename(const char *pszPath, const char *pszURL,
 ** then only the first one (which is assumed to be the layer's default
 ** projection) is returned.
 */
-const char *msOWSGetEPSGProj(projectionObj *proj, hashTableObj *metadata, const char *namespaces, int bReturnOnlyFirstOne)
+void msOWSGetEPSGProj(projectionObj *proj, hashTableObj *metadata, const char *namespaces, int bReturnOnlyFirstOne, char **epsgCode)
 {
-  static char epsgCode[20] ="";
-  char *value;
+  const char *value;
+  *epsgCode = NULL;
 
   /* metadata value should already be in format "EPSG:n" or "AUTO:..." */
-  if (metadata && ((value = (char *) msOWSLookupMetadata(metadata, namespaces, "srs")) != NULL)) {
+  if (metadata && ((value = msOWSLookupMetadata(metadata, namespaces, "srs")) != NULL)) {
+    const char *space_ptr;
+    if (!bReturnOnlyFirstOne || (space_ptr = strchr(value,' ')) == NULL) {
+      *epsgCode = msStrdup(value);
+      return;
+    }
+    
 
-    if (!bReturnOnlyFirstOne) return value;
-
-    /* caller requested only first projection code */
-    strlcpy(epsgCode, value, 20);
-
-    if ((value=strchr(epsgCode, ' ')) != NULL) *value = '\0';
-
-    return epsgCode;
-  } else if (proj && proj->numargs > 0 && (value = strstr(proj->args[0], "init=epsg:")) != NULL && strlen(value) < 20) {
-    snprintf(epsgCode, sizeof(epsgCode), "EPSG:%s", value+10);
-    return epsgCode;
-  } else if (proj && proj->numargs > 0 && (value = strstr(proj->args[0], "init=crs:")) != NULL && strlen(value) < 20) {
-    snprintf(epsgCode, sizeof(epsgCode), "CRS:%s", value+9);
-    return epsgCode;
+    *epsgCode = msSmallMalloc((space_ptr - value + 1)*sizeof(char));
+    /* caller requested only first projection code, copy up to the first space character*/
+    strlcpy(*epsgCode, value, space_ptr - value + 1) ;
+    return;
+  } else if (proj && proj->numargs > 0 && (value = strstr(proj->args[0], "init=epsg:")) != NULL) {
+    *epsgCode = msSmallMalloc((strlen("EPSG:")+strlen(value+10)+1)*sizeof(char));
+    sprintf(*epsgCode, "EPSG:%s", value+10);
+    return;
+  } else if (proj && proj->numargs > 0 && (value = strstr(proj->args[0], "init=crs:")) != NULL) {
+    *epsgCode = msSmallMalloc((strlen("CRS:")+strlen(value+9)+1)*sizeof(char));
+    sprintf(*epsgCode, "CRS:%s", value+9);
+    return;
   } else if (proj && proj->numargs > 0 && (strncasecmp(proj->args[0], "AUTO:", 5) == 0 ||
              strncasecmp(proj->args[0], "AUTO2:", 6) == 0)) {
-    return proj->args[0];
+    *epsgCode = msStrdup(proj->args[0]);
+    return;
   }
-
-  return NULL;
 }
 /*
 ** msOWSGetProjURN()
@@ -2538,9 +2590,10 @@ char *msOWSGetProjURN(projectionObj *proj, hashTableObj *metadata, const char *n
   char **tokens;
   int numtokens, i;
   size_t bufferSize = 0;
-
-  const char *oldStyle = msOWSGetEPSGProj( proj, metadata, namespaces,
-                         bReturnOnlyFirstOne );
+  char *oldStyle;
+  
+  msOWSGetEPSGProj( proj, metadata, namespaces,
+                         bReturnOnlyFirstOne, &oldStyle );
 
   if( oldStyle == NULL || strncmp(oldStyle,"EPSG:",5) != 0 )
     return NULL;
@@ -2548,6 +2601,7 @@ char *msOWSGetProjURN(projectionObj *proj, hashTableObj *metadata, const char *n
   result = msStrdup("");
 
   tokens = msStringSplit(oldStyle, ' ', &numtokens);
+  msFree(oldStyle);
   for(i=0; tokens != NULL && i<numtokens; i++) {
     char urn[100];
 
@@ -2596,9 +2650,10 @@ char *msOWSGetProjURI(projectionObj *proj, hashTableObj *metadata, const char *n
   char *result;
   char **tokens;
   int numtokens, i;
-
-  const char *oldStyle = msOWSGetEPSGProj( proj, metadata, namespaces,
-                         bReturnOnlyFirstOne );
+  char *oldStyle;
+  
+  msOWSGetEPSGProj( proj, metadata, namespaces,
+                         bReturnOnlyFirstOne, &oldStyle);
 
   if( oldStyle == NULL || !EQUALN(oldStyle,"EPSG:",5) )
     return NULL;
@@ -2606,6 +2661,7 @@ char *msOWSGetProjURI(projectionObj *proj, hashTableObj *metadata, const char *n
   result = msStrdup("");
 
   tokens = msStringSplit(oldStyle, ' ', &numtokens);
+  msFree(oldStyle);
   for(i=0; tokens != NULL && i<numtokens; i++) {
     char urn[100];
 

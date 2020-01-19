@@ -2,8 +2,9 @@
  * $Id$
  *
  * Project:  MapServer
- * Purpose:  MS SQL 2008 (Katmai) Layer Connector
+ * Purpose:  MS SQL Server Layer Connector
  * Author:   Richard Hillman - based on PostGIS and SpatialDB connectors
+ *           Tamas Szekeres - maintenance
  *
  ******************************************************************************
  * Copyright (c) 2007 IS Consulting (www.mapdotnet.com)
@@ -50,7 +51,7 @@
 #include <string.h>
 #include <ctype.h> /* tolower() */
 
-/*   SqlGeometry serialization format
+/*   SqlGeometry/SqlGeography serialization format
 
 Simple Point (SerializationProps & IsSinglePoint)
   [SRID][0x01][SerializationProps][Point][z][m]
@@ -59,8 +60,16 @@ Simple Line Segment (SerializationProps & IsSingleLineSegment)
   [SRID][0x01][SerializationProps][Point1][Point2][z1][z2][m1][m2]
 
 Complex Geometries
-  [SRID][0x01][SerializationProps][NumPoints][Point1]..[PointN][z1]..[zN][m1]..[mN]
+  [SRID][VersionAttribute][SerializationProps][NumPoints][Point1]..[PointN][z1]..[zN][m1]..[mN]
   [NumFigures][Figure]..[Figure][NumShapes][Shape]..[Shape]
+
+Complex Geometries (FigureAttribute == Curve)
+  [SRID][VersionAttribute][SerializationProps][NumPoints][Point1]..[PointN][z1]..[zN][m1]..[mN]
+  [NumFigures][Figure]..[Figure][NumShapes][Shape]..[Shape][NumSegments][SegmentType]..[SegmentType]
+
+VersionAttribute (1 byte)
+  0x01 = Katmai (MSSQL2008+)
+  0x02 = Denali (MSSQL2012+)
 
 SRID
   Spatial Reference Id (4 bytes)
@@ -71,7 +80,7 @@ SerializationProps (bitmask) 1 byte
   0x04 = IsValid
   0x08 = IsSinglePoint
   0x10 = IsSingleLineSegment
-  0x20 = IsWholeGlobe
+  0x20 = IsLargerThanAHemisphere
 
 Point (2-4)x8 bytes, size depends on SerializationProps & HasZValues & HasMValues
   [x][y]                  - SqlGeometry
@@ -80,10 +89,16 @@ Point (2-4)x8 bytes, size depends on SerializationProps & HasZValues & HasMValue
 Figure
   [FigureAttribute][PointOffset]
 
-FigureAttribute (1 byte)
+FigureAttribute - Katmai (1 byte)
   0x00 = Interior Ring
   0x01 = Stroke
   0x02 = Exterior Ring
+
+FigureAttribute - Denali (1 byte)
+  0x00 = None
+  0x01 = Line
+  0x02 = Arc
+  0x03 = Curve
 
 Shape
   [ParentFigureOffset][FigureOffset][ShapeType]
@@ -97,6 +112,17 @@ ShapeType (1 byte)
   0x05 = MultiLineString
   0x06 = MultiPolygon
   0x07 = GeometryCollection
+  -- Denali
+  0x08 = CircularString
+  0x09 = CompoundCurve
+  0x0A = CurvePolygon
+  0x0B = FullGlobe
+
+SegmentType (1 byte)
+  0x00 = Line
+  0x01 = Arc
+  0x02 = FirstLine
+  0x03 = FirstArc
 
 */
 
@@ -125,7 +151,7 @@ ShapeType (1 byte)
 #define SP_ISVALID 4
 #define SP_ISSINGLEPOINT 8
 #define SP_ISSINGLELINESEGMENT 0x10
-#define SP_ISWHOLEGLOBE 0x20
+#define SP_ISLARGERTHANAHEMISPHERE 0x20
 
 #define ST_UNKNOWN 0
 #define ST_POINT 1
@@ -135,6 +161,15 @@ ShapeType (1 byte)
 #define ST_MULTILINESTRING 5
 #define ST_MULTIPOLYGON 6
 #define ST_GEOMETRYCOLLECTION 7
+#define ST_CIRCULARSTRING 8
+#define ST_COMPOUNDCURVE 9
+#define ST_CURVEPOLYGON 10
+#define ST_FULLGLOBE 11
+
+#define SMT_LINE 0
+#define SMT_ARC 1
+#define SMT_FIRSTLINE 2
+#define SMT_FIRSTARC 3
 
 #define ReadInt32(nPos) (*((unsigned int*)(gpi->pszData + (nPos))))
 
@@ -145,6 +180,7 @@ ShapeType (1 byte)
 #define ParentOffset(iShape) (ReadInt32(gpi->nShapePos + (iShape) * 9 ))
 #define FigureOffset(iShape) (ReadInt32(gpi->nShapePos + (iShape) * 9 + 4))
 #define ShapeType(iShape) (ReadByte(gpi->nShapePos + (iShape) * 9 + 8))
+#define SegmentType(iSegment) (ReadByte(gpi->nSegmentPos + (iSegment)))
 
 #define NextFigureOffset(iShape) (iShape + 1 < gpi->nNumShapes? FigureOffset((iShape) +1) : gpi->nNumFigures)
 
@@ -157,11 +193,17 @@ ShapeType (1 byte)
 #define ReadZ(iPoint) (ReadDouble(gpi->nPointPos + 16 * gpi->nNumPoints + 8 * (iPoint)))
 #define ReadM(iPoint) (ReadDouble(gpi->nPointPos + 24 * gpi->nNumPoints + 8 * (iPoint)))
 
+#define FP_EPSILON 1e-12
+#define SEGMENT_ANGLE 5.0
+#define SEGMENT_MINPOINTS 10
+
 /* Native geometry parser struct */
 typedef struct msGeometryParserInfo_t {
   unsigned char* pszData;
   int nLen;
-  /* serialization propeties */
+  /* version */
+  char chVersion;
+  /* serialization properties */
   char chProps;
   /* point array */
   int nPointSize;
@@ -175,6 +217,9 @@ typedef struct msGeometryParserInfo_t {
   int nShapePos;
   int nNumShapes;
   int nSRSId;
+  /* segment array */
+  int nSegmentPos;
+  int nNumSegments;
   /* geometry or geography */
   int nColType;
   /* bounds */
@@ -202,6 +247,7 @@ typedef struct ms_MSSQL2008_layer_info_t {
   char *user_srid;     /* zero length = calculate, non-zero means using this value! */
   char *index_name;  /* hopefully this isn't necessary - but if the optimizer ain't cuttin' it... */
   char *sort_spec;  /* the sort by specification which should be applied to the generated select statement */
+  int mssqlversion_major; /* the sql server major version number */
   SQLSMALLINT *itemtypes; /* storing the sql field types for further reference */
 
   msODBCconn * conn;          /* Connection to db */
@@ -243,11 +289,127 @@ void ReadPoint(msGeometryParserInfo* gpi, pointObj* p, int iPoint)
   }
 
 #ifdef USE_POINT_Z_M
-  if ( gpi->chProps & SP_HASZVALUES )
+  if ((gpi->chProps & SP_HASZVALUES) && (gpi->chProps & SP_HASMVALUES))
+  {
     p->z = ReadZ(iPoint);
-  if ( gpi->chProps & SP_HASMVALUES )
-    p->z = ReadM(iPoint);
+    p->m = ReadM(iPoint);
+  }
+  else if (gpi->chProps & SP_HASZVALUES)
+  {
+      p->z = ReadZ(iPoint);
+      p->m = 0.0;
+  }
+  else if (gpi->chProps & SP_HASMVALUES)
+  {
+      p->z = 0.0;
+      p->m = ReadZ(iPoint);
+  }
+  else
+  {
+      p->z = 0.0;
+      p->m = 0.0;
+  }
 #endif
+}
+
+int StrokeArcToLine(msGeometryParserInfo* gpi, lineObj* line, int index)
+{
+    if (index > 1) {
+        double x, y, x1, y1, x2, y2, x3, y3, dxa, dya, sxa, sya, dxb, dyb;
+        double d, sxb, syb, ox, oy, a1, a3, sa, da, a, radius;
+        int numpoints;
+#ifdef USE_POINT_Z_M
+        double z;
+        z = line->point[index].z; /* must be equal for arc segments */
+#endif
+        /* first point */
+        x1 = line->point[index - 2].x;
+        y1 = line->point[index - 2].y;
+        /* second point */
+        x2 = line->point[index - 1].x;
+        y2 = line->point[index - 1].y;
+        /* third point */
+        x3 = line->point[index].x;
+        y3 = line->point[index].y;
+
+        sxa = (x1 + x2);
+        sya = (y1 + y2);
+        dxa = x2 - x1;
+        dya = y2 - y1;
+
+        sxb = (x2 + x3);
+        syb = (y2 + y3);
+        dxb = x3 - x2;
+        dyb = y3 - y2;
+
+        d = (dxa * dyb - dya * dxb) * 2;
+
+        if (fabs(d) < FP_EPSILON) {
+            /* points are colinear, nothing to do here */
+            return index;
+        }
+
+        /* calculating the center of circle */
+        ox = ((sya - syb) * dya * dyb + sxa * dyb * dxa - sxb * dya * dxb) / d;
+        oy = ((sxb - sxa) * dxa * dxb + syb * dyb * dxa - sya * dya * dxb) / d;
+
+        radius = sqrt((x1 - ox) * (x1 - ox) + (y1 - oy) * (y1 - oy));
+
+        /* calculating the angle to be used */
+        a1 = atan2(y1 - oy, x1 - ox);
+        a3 = atan2(y3 - oy, x3 - ox);
+
+        if (d > 0) {
+            /* draw counterclockwise */
+            if (a3 > a1) /* Wrapping past 180? */
+                sa = a3 - a1;
+            else
+                sa = a3 - a1 + 2.0 * M_PI ;
+        }
+        else {
+            if (a3 > a1) /* Wrapping past 180? */
+                sa = a3 - a1 + 2.0 * M_PI;
+            else
+                sa = a3 - a1;
+        }
+
+        numpoints = (int)floor(fabs(sa) * 180 / SEGMENT_ANGLE / M_PI);
+        if (numpoints < SEGMENT_MINPOINTS)
+            numpoints = SEGMENT_MINPOINTS;
+
+        da = sa / numpoints;
+
+        /* extend the point array */
+        line->numpoints += numpoints - 2;
+        line->point = msSmallRealloc(line->point, sizeof(pointObj) * line->numpoints);
+        --index;
+
+        a = a1 + da;
+        while (numpoints > 1) {
+            line->point[index].x = x = ox + radius * cos(a);
+            line->point[index].y = y = oy + radius * sin(a);
+#ifdef USE_POINT_Z_M
+            line->point[index].z = z;
+#endif
+
+            /* calculate bounds */
+            if (gpi->minx > x) gpi->minx = x;
+            else if (gpi->maxx < x) gpi->maxx = x;
+            if (gpi->miny > y) gpi->miny = y;
+            else if (gpi->maxy < y) gpi->maxy = y;
+
+            a += da;
+            ++index;
+            --numpoints;
+        }
+        /* set last point */
+        line->point[index].x = x3;
+        line->point[index].y = y3;
+#ifdef USE_POINT_Z_M
+        line->point[index].z = z;
+#endif
+    }
+    return index;
 }
 
 int ParseSqlGeometry(msMSSQL2008LayerInfo* layerinfo, shapeObj *shape)
@@ -264,19 +426,22 @@ int ParseSqlGeometry(msMSSQL2008LayerInfo* layerinfo, shapeObj *shape)
   /* store the SRS id for further use */
   gpi->nSRSId = ReadInt32(0);
 
-  if ( ReadByte(4) != 1 ) {
+  gpi->chVersion = ReadByte(4);
+
+  if (gpi->chVersion > 2) {
     msDebug("ParseSqlGeometry CORRUPT_DATA\n");
     return CORRUPT_DATA;
   }
 
   gpi->chProps = ReadByte(5);
 
+  gpi->nPointSize = 16;
+
   if ( gpi->chProps & SP_HASMVALUES )
-    gpi->nPointSize = 32;
-  else if ( gpi->chProps & SP_HASZVALUES )
-    gpi->nPointSize = 24;
-  else
-    gpi->nPointSize = 16;
+    gpi->nPointSize += 8;
+
+  if ( gpi->chProps & SP_HASZVALUES )
+    gpi->nPointSize += 8;
 
   if ( gpi->chProps & SP_ISSINGLEPOINT ) {
     // single point geometry
@@ -312,7 +477,7 @@ int ParseSqlGeometry(msMSSQL2008LayerInfo* layerinfo, shapeObj *shape)
     ReadPoint(gpi, &shape->line[0].point[0], 0);
     ReadPoint(gpi, &shape->line[0].point[1], 1);
   } else {
-    int iShape, iFigure;
+    int iShape, iFigure, iSegment;
     // complex geometries
     gpi->nNumPoints = ReadInt32(6);
 
@@ -368,10 +533,13 @@ int ParseSqlGeometry(msMSSQL2008LayerInfo* layerinfo, shapeObj *shape)
       if (shapeType == ST_POINT || shapeType == ST_MULTIPOINT) {
         shape->type = MS_SHAPE_POINT;
         break;
-      } else if (shapeType == ST_LINESTRING || shapeType == ST_MULTILINESTRING) {
+      } else if (shapeType == ST_LINESTRING || shapeType == ST_MULTILINESTRING || 
+                 shapeType == ST_CIRCULARSTRING || shapeType == ST_COMPOUNDCURVE) {
         shape->type = MS_SHAPE_LINE;
         break;
-      } else if (shapeType == ST_POLYGON || shapeType == ST_MULTIPOLYGON) {
+      } else if (shapeType == ST_POLYGON || shapeType == ST_MULTIPOLYGON || 
+                 shapeType == ST_CURVEPOLYGON)
+      {
         shape->type = MS_SHAPE_POLYGON;
         break;
       }
@@ -379,6 +547,8 @@ int ParseSqlGeometry(msMSSQL2008LayerInfo* layerinfo, shapeObj *shape)
 
     shape->line = (lineObj *) msSmallMalloc(sizeof(lineObj) * gpi->nNumFigures);
     shape->numlines = gpi->nNumFigures;
+    gpi->nNumSegments = 0;
+
     // read figures
     for (iFigure = 0; iFigure < gpi->nNumFigures; iFigure++) {
       int iPoint, iNextPoint, i;
@@ -386,15 +556,61 @@ int ParseSqlGeometry(msMSSQL2008LayerInfo* layerinfo, shapeObj *shape)
       iNextPoint = NextPointOffset(iFigure);
 
       shape->line[iFigure].point = (pointObj *) msSmallMalloc(sizeof(pointObj)*(iNextPoint - iPoint));
-
+      shape->line[iFigure].numpoints = iNextPoint - iPoint;
       i = 0;
-      while (iPoint < iNextPoint) {
-        ReadPoint(gpi, &shape->line[iFigure].point[i], iPoint);
-        ++iPoint;
-        ++i;
-      }
 
-      shape->line[iFigure].numpoints = i;
+      if (gpi->chVersion == 0x02 && FigureAttribute(iFigure) >= 0x02) {
+          int nPointPrepared = 0;
+          lineObj* line = &shape->line[iFigure];
+          if (FigureAttribute(iFigure) == 0x03) {
+              if (gpi->nNumSegments == 0) {
+                  /* position of the segment types */
+                  gpi->nSegmentPos = gpi->nShapePos + 9 * gpi->nNumShapes + 4;
+                  gpi->nNumSegments = ReadInt32(gpi->nSegmentPos - 4);
+                  if (gpi->nLen < gpi->nSegmentPos + gpi->nNumSegments) {
+                      msDebug("ParseSqlGeometry NOT_ENOUGH_DATA\n");
+                      return NOT_ENOUGH_DATA;
+                  }
+                  iSegment = 0;
+              }             
+             
+              while (iPoint < iNextPoint && iSegment < gpi->nNumSegments) {
+                  ReadPoint(gpi, &line->point[i], iPoint);
+                  ++iPoint;
+                  ++nPointPrepared;
+
+                  if (nPointPrepared == 2 && (SegmentType(iSegment) == SMT_FIRSTLINE || SegmentType(iSegment) == SMT_LINE)) {
+                      ++iSegment;
+                      nPointPrepared = 1;
+                  }
+                  else if (nPointPrepared == 3 && (SegmentType(iSegment) == SMT_FIRSTARC || SegmentType(iSegment) == SMT_ARC)) {
+                      i = StrokeArcToLine(gpi, line, i);
+                      ++iSegment;
+                      nPointPrepared = 1;
+                  }
+                  ++i;
+              }
+          }
+          else {
+              while (iPoint < iNextPoint) {
+                  ReadPoint(gpi, &line->point[i], iPoint);
+                  ++iPoint;
+                  ++nPointPrepared;
+                  if (nPointPrepared == 3) {
+                      i = StrokeArcToLine(gpi, line, i);
+                      nPointPrepared = 1;
+                  }
+                  ++i;
+              }
+          }
+      }
+      else {
+          while (iPoint < iNextPoint) {
+              ReadPoint(gpi, &shape->line[iFigure].point[i], iPoint);
+              ++iPoint;
+              ++i;
+          }
+      }
     }
   }
 
@@ -758,6 +974,7 @@ int msMSSQL2008LayerOpen(layerObj *layer)
   layerinfo->sort_spec = NULL;
   layerinfo->conn = NULL;
   layerinfo->itemtypes = NULL;
+  layerinfo->mssqlversion_major = 0;
 
   layerinfo->conn = (msODBCconn *) msConnPoolRequest(layer);
 
@@ -887,26 +1104,162 @@ int msMSSQL2008LayerInitItemInfo(layerObj *layer)
   return MS_SUCCESS;
 }
 
+static int getMSSQLMajorVersion(layerObj* layer)
+{
+  msMSSQL2008LayerInfo  *layerinfo = getMSSQL2008LayerInfo(layer);
+  if (layerinfo == NULL)
+    return 0;
+
+  if (layerinfo->mssqlversion_major == 0) {
+    char* mssqlversion_major = msLayerGetProcessingKey(layer, "MSSQL_VERSION_MAJOR");
+    if (mssqlversion_major != NULL) {
+      layerinfo->mssqlversion_major = atoi(mssqlversion_major);
+    }
+    else {
+      /* need to query from database */
+      if (executeSQL(layerinfo->conn, "SELECT SERVERPROPERTY('ProductVersion')")) {
+        SQLRETURN rc = SQLFetch(layerinfo->conn->hstmt);
+        if (rc == SQL_SUCCESS || rc == SQL_SUCCESS_WITH_INFO) {
+          /* process results */
+          char result_data[256];
+          SQLLEN retLen = 0;
+
+          rc = SQLGetData(layerinfo->conn->hstmt, 1, SQL_C_CHAR, result_data, sizeof(result_data), &retLen);
+
+          if (rc != SQL_ERROR) {
+            result_data[retLen] = 0;
+            layerinfo->mssqlversion_major = atoi(result_data);
+          }
+        }
+      }
+    }
+  }
+
+  return layerinfo->mssqlversion_major;
+}
+
 /* Get the layer extent as specified in the mapfile or a largest area */
 /* covering all features */
 int msMSSQL2008LayerGetExtent(layerObj *layer, rectObj *extent)
 {
-  if(layer->debug) {
-    msDebug("msMSSQL2008LayerGetExtent called\n");
-  }
+    msMSSQL2008LayerInfo *layerinfo;
+    char *query = 0;
+    char result_data[256];
+    SQLLEN retLen;
+    SQLRETURN rc;
+    
+    if(layer->debug) {
+      msDebug("msMSSQL2008LayerGetExtent called\n");
+    }
 
-  if (layer->extent.minx == -1.0 && layer->extent.miny == -1.0 &&
-      layer->extent.maxx == -1.0 && layer->extent.maxy == -1.0) {
-    extent->minx = extent->miny = -1.0 * FLT_MAX;
-    extent->maxx = extent->maxy = FLT_MAX;
-  } else {
-    extent->minx = layer->extent.minx;
-    extent->miny = layer->extent.miny;
-    extent->maxx = layer->extent.maxx;
-    extent->maxy = layer->extent.maxy;
-  }
+    if (!(layer->extent.minx == -1.0 && layer->extent.miny == -1.0 && 
+        layer->extent.maxx == -1.0 && layer->extent.maxy == -1.0)) {
+      /* extent was already set */
+      extent->minx = layer->extent.minx;
+      extent->miny = layer->extent.miny;
+      extent->maxx = layer->extent.maxx;
+      extent->maxy = layer->extent.maxy;
+    }
 
-  return MS_SUCCESS;
+    layerinfo = getMSSQL2008LayerInfo(layer);
+
+    if (!layerinfo) {
+        msSetError(MS_QUERYERR, "GetExtent called with layerinfo = NULL", "msMSSQL2008LayerGetExtent()");
+        return MS_FAILURE;
+    }
+
+    /* set up statement */
+    if (getMSSQLMajorVersion(layer) >= 11) {
+      if (strcasecmp(layerinfo->geom_column_type, "geography") == 0) {
+        query = msStringConcatenate(query, "WITH extent(extentcol) AS (SELECT geometry::EnvelopeAggregate(geometry::STGeomFromWKB(");
+        query = msStringConcatenate(query, layerinfo->geom_column);
+        query = msStringConcatenate(query, ".STAsBinary(), ");
+        query = msStringConcatenate(query, layerinfo->geom_column);
+        query = msStringConcatenate(query, ".STSrid)");
+      }
+      else {
+        query = msStringConcatenate(query, "WITH extent(extentcol) AS (SELECT geometry::EnvelopeAggregate(");
+        query = msStringConcatenate(query, layerinfo->geom_column);        
+      }
+      query = msStringConcatenate(query, ") AS extentcol FROM ");
+      query = msStringConcatenate(query, layerinfo->geom_table);
+      query = msStringConcatenate(query, ") SELECT extentcol.STPointN(1).STX, extentcol.STPointN(1).STY, extentcol.STPointN(3).STX, extentcol.STPointN(3).STY FROM extent");
+    }
+    else {
+      if (strcasecmp(layerinfo->geom_column_type, "geography") == 0) {
+        query = msStringConcatenate(query, "WITH ENVELOPE as (SELECT geometry::STGeomFromWKB(");
+        query = msStringConcatenate(query, layerinfo->geom_column);
+        query = msStringConcatenate(query, ".STAsBinary(), ");
+        query = msStringConcatenate(query, layerinfo->geom_column);
+        query = msStringConcatenate(query, ".STSrid)");
+      }
+      else {
+        query = msStringConcatenate(query, "WITH ENVELOPE as (SELECT ");
+        query = msStringConcatenate(query, layerinfo->geom_column);      
+      }
+      query = msStringConcatenate(query, ".STEnvelope() as envelope from ");
+      query = msStringConcatenate(query, layerinfo->geom_table);
+      query = msStringConcatenate(query, "), CORNERS as (SELECT envelope.STPointN(1) as point from ENVELOPE UNION ALL select envelope.STPointN(3) from ENVELOPE) SELECT MIN(point.STX), MIN(point.STY), MAX(point.STX), MAX(point.STY) FROM CORNERS");
+    }
+
+    if (!executeSQL(layerinfo->conn, query)) {
+        msFree(query);
+        return MS_FAILURE;
+    }
+
+    msFree(query);
+
+    /* process results */
+    rc = SQLFetch(layerinfo->conn->hstmt);
+
+    if (rc != SQL_SUCCESS && rc != SQL_SUCCESS_WITH_INFO) {
+        if (layer->debug) {
+            msDebug("msMSSQL2008LayerGetExtent: No results found.\n");
+        }
+        return MS_FAILURE;
+    }
+
+    rc = SQLGetData(layerinfo->conn->hstmt, 1, SQL_C_CHAR, result_data, sizeof(result_data), &retLen);
+    if (rc == SQL_ERROR) {
+        msSetError(MS_QUERYERR, "Failed to get MinX value", "msMSSQL2008LayerGetExtent()");
+        return MS_FAILURE;
+    }
+
+    result_data[retLen] = 0;
+
+    extent->minx = atof(result_data);
+
+    rc = SQLGetData(layerinfo->conn->hstmt, 2, SQL_C_CHAR, result_data, sizeof(result_data), &retLen);
+    if (rc == SQL_ERROR) {
+        msSetError(MS_QUERYERR, "Failed to get MinY value", "msMSSQL2008LayerGetExtent()");
+        return MS_FAILURE;
+    }
+
+    result_data[retLen] = 0;
+
+    extent->miny = atof(result_data);
+
+    rc = SQLGetData(layerinfo->conn->hstmt, 3, SQL_C_CHAR, result_data, sizeof(result_data), &retLen);
+    if (rc == SQL_ERROR) {
+        msSetError(MS_QUERYERR, "Failed to get MaxX value", "msMSSQL2008LayerGetExtent()");
+        return MS_FAILURE;
+    }
+
+    result_data[retLen] = 0;
+
+    extent->maxx = atof(result_data);
+
+    rc = SQLGetData(layerinfo->conn->hstmt, 4, SQL_C_CHAR, result_data, sizeof(result_data), &retLen);
+    if (rc == SQL_ERROR) {
+        msSetError(MS_QUERYERR, "Failed to get MaxY value", "msMSSQL2008LayerGetExtent()");
+        return MS_FAILURE;
+    }
+
+    result_data[retLen] = 0;
+
+    extent->maxy = atof(result_data);
+
+    return MS_SUCCESS;
 }
 
 /* Get the layer feature count */
@@ -946,8 +1299,8 @@ int msMSSQL2008LayerGetNumFeatures(layerObj *layer)
     }
 
     if (!executeSQL(layerinfo->conn, query)) {
-      msFree(query);
-      return -1;
+        msFree(query);
+        return -1;
     }
 
     msFree(query);
@@ -961,7 +1314,7 @@ int msMSSQL2008LayerGetNumFeatures(layerObj *layer)
 
         return -1;
     }
-    
+
     rc = SQLGetData(layerinfo->conn->hstmt, 1, SQL_C_CHAR, result_data, sizeof(result_data), &retLen);
 
     if (rc == SQL_ERROR) {
@@ -1093,14 +1446,13 @@ static int prepare_database(layerObj *layer, rectObj rect, char **query_string)
   /* adding items to the select list */
   for (t = 0; t < layer->numitems; t++) {
 #ifdef USE_ICONV
-    /* no conversion applied at the database */
-    query = msStringConcatenate(query, "[");
-    query = msStringConcatenate(query, layer->items[t]);
-    query = msStringConcatenate(query, "],");
+      query = msStringConcatenate(query, "convert(nvarchar(max), [");
+      query = msStringConcatenate(query, layer->items[t]);
+      query = msStringConcatenate(query, "]),");
 #else
-    query = msStringConcatenate(query, "convert(varchar(max), [");
-    query = msStringConcatenate(query, layer->items[t]);
-    query = msStringConcatenate(query, "]),");
+      query = msStringConcatenate(query, "convert(varchar(max), [");
+      query = msStringConcatenate(query, layer->items[t]);
+      query = msStringConcatenate(query, "]),");
 #endif
   }
 
@@ -1123,75 +1475,85 @@ static int prepare_database(layerObj *layer, rectObj rect, char **query_string)
   msFree(f_table_name);
 
   /* use the index hint if provided */
-  if ( layerinfo->index_name ) {
-    query = msStringConcatenate(query, " WITH (INDEX(");
-    query = msStringConcatenate(query, layerinfo->index_name);
-    query = msStringConcatenate(query, "))");
+  if (layerinfo->index_name) {
+      query = msStringConcatenate(query, " WITH (INDEX(");
+      query = msStringConcatenate(query, layerinfo->index_name);
+      query = msStringConcatenate(query, "))");
   }
 
   /* adding attribute filter */
   if (layer->filter.native_string) {
-    query = msStringConcatenate(query, " WHERE (");
-    query = msStringConcatenate(query, layer->filter.native_string);
-    query = msStringConcatenate(query, ")");
-    hasFilter = MS_TRUE;
+      query = msStringConcatenate(query, " WHERE (");
+      query = msStringConcatenate(query, layer->filter.native_string);
+      query = msStringConcatenate(query, ")");
+      hasFilter = MS_TRUE;
   }
   else if (msLayerGetProcessingKey(layer, "NATIVE_FILTER") != NULL) {
-    query = msStringConcatenate(query, " WHERE (");
-    query = msStringConcatenate(query, msLayerGetProcessingKey(layer, "NATIVE_FILTER"));
-    query = msStringConcatenate(query, ")");
-    hasFilter = MS_TRUE;
+      query = msStringConcatenate(query, " WHERE (");
+      query = msStringConcatenate(query, msLayerGetProcessingKey(layer, "NATIVE_FILTER"));
+      query = msStringConcatenate(query, ")");
+      hasFilter = MS_TRUE;
   }
 
   /* adding spatial filter */
-  msMSSQL2008LayerGetExtent(layer, &extent); 
-  if (rect.minx > extent.minx || rect.miny > extent.miny || 
-      rect.maxx < extent.maxx || rect.maxy < extent.maxy) {
-    if (hasFilter == MS_FALSE)
+  if (hasFilter == MS_FALSE)
       query = msStringConcatenate(query, " WHERE ");
-    else
+  else
       query = msStringConcatenate(query, " AND ");
 
-    query = msStringConcatenate(query, layerinfo->geom_column);
-    query = msStringConcatenate(query, ".STIntersects(");
-    query = msStringConcatenate(query, box3d);
-    query = msStringConcatenate(query, ") = 1 ");
+  query = msStringConcatenate(query, layerinfo->geom_column);
+  query = msStringConcatenate(query, ".STIntersects(");
+  query = msStringConcatenate(query, box3d);
+  query = msStringConcatenate(query, ") = 1 ");
+
+  if (layerinfo->sort_spec) {
+      query = msStringConcatenate(query, layerinfo->sort_spec);
   }
 
-  if (layerinfo->sort_spec)
-    query = msStringConcatenate(query, layerinfo->sort_spec);
+  /* Add extra sort by */
+  if( layer->sortBy.nProperties > 0 ) {
+    char* pszTmp = msLayerBuildSQLOrderBy(layer);
+    if (layerinfo->sort_spec)
+        query = msStringConcatenate(query, ", ");
+    else
+        query = msStringConcatenate(query, " ORDER BY ");
+    query = msStringConcatenate(query, pszTmp);
+    msFree(pszTmp);
+  }
 
-  if(layer->debug) {
-    msDebug("query:%s\n", query);
+
+  if (layer->debug) {
+      msDebug("query:%s\n", query);
   }
 
   if (executeSQL(layerinfo->conn, query)) {
-    char pass_field_def = 0;
-    int t;
-    const char *value;
-    *query_string = query;
-    /* collect result information */
-    if((value = msOWSLookupMetadata(&(layer->metadata), "G", "types")) != NULL
-        && strcasecmp(value,"auto") == 0 )
-      pass_field_def = 1;
+      char pass_field_def = 0;
+      int t;
+      const char *value;
+      *query_string = query;
+      /* collect result information */
+      if ((value = msOWSLookupMetadata(&(layer->metadata), "G", "types")) != NULL
+          && strcasecmp(value, "auto") == 0)
+          pass_field_def = 1;
 
-    msFree(layerinfo->itemtypes);
-    layerinfo->itemtypes = msSmallMalloc(sizeof(SQLSMALLINT) * (layer->numitems + 1));
-    for(t = 0; t < layer->numitems; t++) {
-      char colBuff[256];
-      SQLSMALLINT itemType;
+      msFree(layerinfo->itemtypes);
+      layerinfo->itemtypes = msSmallMalloc(sizeof(SQLSMALLINT) * (layer->numitems + 1));
+      for (t = 0; t < layer->numitems; t++) {
+          char colBuff[256];
+          SQLSMALLINT itemType;
 
-      columnName(layerinfo->conn, t + 1, colBuff, sizeof(colBuff), layer, pass_field_def, &itemType);
-      layerinfo->itemtypes[t] = itemType;
-    }
+          columnName(layerinfo->conn, t + 1, colBuff, sizeof(colBuff), layer, pass_field_def, &itemType);
+          layerinfo->itemtypes[t] = itemType;
+      }
 
-    return MS_SUCCESS;
-  } else {
-    msSetError(MS_QUERYERR, "Error executing MSSQL2008 SQL statement: %s\n-%s\n", "msMSSQL2008LayerGetShape()", query, layerinfo->conn->errorMessage);
+      return MS_SUCCESS;
+  }
+  else {
+      msSetError(MS_QUERYERR, "Error executing MSSQL2008 SQL statement: %s\n-%s\n", "msMSSQL2008LayerGetShape()", query, layerinfo->conn->errorMessage);
 
-    msFree(query);
+      msFree(query);
 
-    return MS_FAILURE;
+      return MS_FAILURE;
   }
 }
 
@@ -2565,6 +2927,11 @@ int process_node(layerObj* layer, expressionObj *filter)
        break;
     /* literal tokens */
     case MS_TOKEN_LITERAL_BOOLEAN:
+      if(layerinfo->current_node->tokenval.dblval == MS_TRUE)
+        filter->native_string = msStringConcatenate(filter->native_string, "1");
+      else
+        filter->native_string = msStringConcatenate(filter->native_string, "0");
+      break;
     case MS_TOKEN_LITERAL_NUMBER:
       strtmpl = "%lf";
       snippet = (char *) msSmallMalloc(strlen(strtmpl) + 16);
@@ -2712,6 +3079,8 @@ int process_node(layerObj* layer, expressionObj *filter)
           i++;
           continue;
         }
+        if( c == '$' && c_next == 0 && strtmpl[0] == '^' )
+          break;
 
         if (c == '\\') {
           i++;
@@ -3232,6 +3601,7 @@ msMSSQL2008LayerInitializeVirtualTable(layerObj *layer)
   layer->vtable->LayerWhichShapes = msMSSQL2008LayerWhichShapes;
   layer->vtable->LayerNextShape = msMSSQL2008LayerNextShape;
   layer->vtable->LayerGetShape = msMSSQL2008LayerGetShape;
+  /* layer->vtable->LayerGetShapeCount, use default */
 
   layer->vtable->LayerClose = msMSSQL2008LayerClose;
 

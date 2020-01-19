@@ -30,8 +30,7 @@
 */
 
 %extend mapObj 
-{
-
+{         
     mapObj(char *filename="") 
     {
         if (filename && strlen(filename))
@@ -42,18 +41,18 @@
     }
 
 #ifdef SWIGCSHARP      
-    mapObj(char *mapText, int isMapText /*used as signature only to differentiate this constructor from efault constructor*/ ) 
+    mapObj(char *mapText, int isMapText /*used as signature only to differentiate this constructor from default constructor*/ ) 
     {
         return msLoadMapFromString(mapText, NULL);
     }
-#endif
-
+#endif 
+    
     ~mapObj() 
     {
         msFreeMap(self);
     }
 
-#ifdef SWIGJAVA
+#if defined (SWIGJAVA) || defined (SWIGPHP)
     %newobject cloneMap;
     mapObj *cloneMap() 
 #else
@@ -69,7 +68,7 @@
         }
         return dstMap;
     }
-
+    
 #ifdef SWIGCSHARP
 %apply SWIGTYPE *SETREFERENCE {layerObj *layer};
 #endif
@@ -169,7 +168,7 @@
       else
       {  
           msFree( self->imagetype );
-          self->imagetype = strdup(imagetype);
+          self->imagetype = msStrdup(imagetype);
           msApplyOutputFormat( &(self->outputformat), format, MS_NOOVERRIDE, 
                                MS_NOOVERRIDE, MS_NOOVERRIDE );
       }
@@ -186,12 +185,12 @@
         else
         {   
             msFree( self->imagetype );
-            self->imagetype = strdup(imagetype);
+            self->imagetype = msStrdup(imagetype);
             msApplyOutputFormat( &(self->outputformat), format, MS_NOOVERRIDE, 
                                  MS_NOOVERRIDE, MS_NOOVERRIDE );
         }
     }
-
+        
   %newobject getOutputFormat;
   outputFormatObj *getOutputFormat(int i) {
     if(i >= 0 && i < self->numoutputformats) {
@@ -208,11 +207,12 @@
                            MS_NOOVERRIDE, MS_NOOVERRIDE );
   }
 
+
   %newobject draw;
   imageObj *draw() {
 #if defined(WIN32) && defined(SWIGCSHARP)
     __try {
-    return msDrawMap(self, MS_FALSE);
+        return msDrawMap(self, MS_FALSE);
     }    
     __except(1 /*EXCEPTION_EXECUTE_HANDLER, catch every exception so it doesn't crash IIS*/) {  
         msSetError(MS_IMGERR, "Unhandled exception in drawing map image 0x%08x", "msDrawMap()", GetExceptionCode());
@@ -220,7 +220,6 @@
 #else    
     return msDrawMap(self, MS_FALSE);
 #endif    
-
   }
 
   %newobject drawQuery;
@@ -261,7 +260,7 @@
     self->query.type = MS_QUERY_BY_FILTER;
     self->query.mode = MS_QUERY_MULTIPLE;
 
-    self->query.filter.string = strdup(string);
+    self->query.filter.string = msStrdup(string);
     self->query.filter.type = MS_EXPRESSION;
 
     self->query.rect = self->extent;
@@ -376,7 +375,7 @@
     msFreeSymbolSet(&self->symbolset);
     msInitSymbolSet(&self->symbolset);
    
-    self->symbolset.filename = strdup(szFileName);
+    self->symbolset.filename = msStrdup(szFileName);
 
     /* Symbolset shares same fontset as main mapfile */
     self->symbolset.fontset = &(self->fontset);
@@ -392,7 +391,7 @@
     msFreeFontSet(&(self->fontset));
     msInitFontSet(&(self->fontset));
    
-    self->fontset.filename = strdup(filename);
+    self->fontset.filename = msStrdup(filename);
 
     return msLoadFontSet(&(self->fontset), self);
   }

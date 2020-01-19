@@ -73,9 +73,9 @@ input: /* empty string */
       break;
     case(MS_PARSE_TYPE_STRING):
       if($1) 
-        p->result.strval = strdup("true");
+        p->result.strval = msStrdup("true");
       else
-        p->result.strval = strdup("false");
+        p->result.strval = msStrdup("false");
       break;
     }
   }
@@ -102,7 +102,7 @@ input: /* empty string */
         p->result.intval = MS_FALSE;
       break;
     case(MS_PARSE_TYPE_STRING):
-      p->result.strval = $1; // strdup($1);
+      p->result.strval = $1; // msStrdup($1);
       break;
     }
   }
@@ -758,6 +758,7 @@ string_exp: STRING
   | TOSTRING '(' math_exp ',' string_exp ')' {
     $$ = (char *) malloc(strlen($5) + 64); /* Plenty big? Should use snprintf below... */
     sprintf($$, $5, $3);
+    free($5);
   }
   | COMMIFY '(' string_exp ')' {  
     $3 = msCommifyString($3); 
@@ -817,7 +818,7 @@ int yylex(YYSTYPE *lvalp, parseObj *p)
   case MS_TOKEN_LITERAL_STRING:
     // printf("token value = %s\n", p->expr->curtoken->tokenval.strval); 
     token = STRING;
-    (*lvalp).strval = strdup(p->expr->curtoken->tokenval.strval);    
+    (*lvalp).strval = msStrdup(p->expr->curtoken->tokenval.strval);    
     break;
   case MS_TOKEN_LITERAL_TIME:
     token = TIME;
@@ -833,6 +834,8 @@ int yylex(YYSTYPE *lvalp, parseObj *p)
   case MS_TOKEN_COMPARISON_GE: token = GE; break;
   case MS_TOKEN_COMPARISON_RE: token = RE; break;
   case MS_TOKEN_COMPARISON_IRE: token = IRE; break;
+
+  case MS_TOKEN_COMPARISON_IN: token = IN; break;
 
   case MS_TOKEN_COMPARISON_INTERSECTS: token = INTERSECTS; break;
   case MS_TOKEN_COMPARISON_DISJOINT: token = DISJOINT; break;
@@ -856,7 +859,7 @@ int yylex(YYSTYPE *lvalp, parseObj *p)
     break;
   case MS_TOKEN_BINDING_STRING:
     token = STRING;
-    (*lvalp).strval = strdup(p->shape->values[p->expr->curtoken->tokenval.bindval.index]);
+    (*lvalp).strval = msStrdup(p->shape->values[p->expr->curtoken->tokenval.bindval.index]);
     break;
   case MS_TOKEN_BINDING_SHAPE:
     token = SHAPE;

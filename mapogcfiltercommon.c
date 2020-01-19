@@ -41,7 +41,7 @@ char *FLTGetIsLikeComparisonCommonExpression(FilterEncodingNode *psFilterNode)
 {
   const size_t bufferSize = 1024;
   char szBuffer[1024];
-  char szTmp[256];
+  char szTmp[512];
   char *pszValue = NULL;
 
   const char *pszWild = NULL;
@@ -51,6 +51,10 @@ char *FLTGetIsLikeComparisonCommonExpression(FilterEncodingNode *psFilterNode)
   FEPropertyIsLike* propIsLike;
 
   int nLength=0, i=0, iTmp=0;
+
+  /* From http://pubs.opengroup.org/onlinepubs/009695399/basedefs/xbd_chap09.html#tag_09_04 */
+  /* also add double quote because we are within a string */
+  const char* pszRegexSpecialCharsAndDoubleQuote = "\\^${[().*+?|\"";
 
   if (!psFilterNode || !psFilterNode->pOther || !psFilterNode->psLeftNode || !psFilterNode->psRightNode || !psFilterNode->psRightNode->pszValue)
     return NULL;
@@ -88,36 +92,87 @@ char *FLTGetIsLikeComparisonCommonExpression(FilterEncodingNode *psFilterNode)
 
   pszValue = psFilterNode->psRightNode->pszValue;
   nLength = strlen(pszValue);
-  if( 1 + 2 * nLength + 1 + 1 >= sizeof(szTmp) )
+  /* The 4 factor is in case of \. See below */
+  if( 1 + 4 * nLength + 1 + 1 + 1 >= sizeof(szTmp) )
       return NULL;
 
   iTmp =0;
-  if (nLength > 0 && pszValue[0] != pszWild[0] && pszValue[0] != pszSingle[0] && pszValue[0] != pszEscape[0]) {
+  if (nLength > 0) {
     szTmp[iTmp]= '^';
     iTmp++;
   }
   for (i=0; i<nLength; i++) {
-    if (pszValue[i] != pszWild[0] && pszValue[i] != pszSingle[0] && pszValue[i] != pszEscape[0]) {
-      szTmp[iTmp] = pszValue[i];
-      iTmp++;
-      szTmp[iTmp] = '\0';
-    } else if (pszValue[i] == pszSingle[0]) {
+    if (pszValue[i] == pszSingle[0]) {
       szTmp[iTmp] = '.';
       iTmp++;
       szTmp[iTmp] = '\0';
-    } else if (pszValue[i] == pszEscape[0]) {
-      szTmp[iTmp] = '\\';
-      iTmp++;
+    /* The Filter escape character is supposed to only escape the single, wildcard and escape character */
+    } else if (pszValue[i] == pszEscape[0] && (
+                    pszValue[i+1] == pszSingle[0] ||
+                    pszValue[i+1] == pszWild[0] ||
+                    pszValue[i+1] == pszEscape[0])) {
+      if( pszValue[i+1] == '\\' )
+      {
+          /* Tricky case: \ must be escaped ncce in the regular expression context
+             so that the regexp matches it as an ordinary character.
+             But as \ is also the escape character for MapServer string, we
+             must escape it again. */
+          szTmp[iTmp++] = '\\';
+          szTmp[iTmp++] = '\\';
+          szTmp[iTmp++] = '\\';
+          szTmp[iTmp++] = '\\';
+      }
+      else
+      {
+        /* If the escaped character is itself a regular expression special character */
+        /* we need to regular-expression-escape-it ! */
+        if( strchr(pszRegexSpecialCharsAndDoubleQuote, pszValue[i+1]) )
+        {
+            szTmp[iTmp++] = '\\';
+        }
+        szTmp[iTmp++] = pszValue[i+1];
+      }
+      i++;
       szTmp[iTmp] = '\0';
     } else if (pszValue[i] == pszWild[0]) {
       szTmp[iTmp++] = '.';
       szTmp[iTmp++] = '*';
       szTmp[iTmp] = '\0';
     }
+    /* Escape regular expressions special characters and double quote */
+    else if (strchr(pszRegexSpecialCharsAndDoubleQuote, pszValue[i]))
+    {
+      if( pszValue[i] == '\\' )
+      {
+          /* See above explantation */
+          szTmp[iTmp++] = '\\';
+          szTmp[iTmp++] = '\\';
+          szTmp[iTmp++] = '\\';
+          szTmp[iTmp++] = '\\';
+      }
+      else
+      {
+        szTmp[iTmp++] = '\\';
+        szTmp[iTmp++] = pszValue[i];
+      }
+      szTmp[iTmp] = '\0';
+    }
+    else {
+      szTmp[iTmp] = pszValue[i];
+      iTmp++;
+      szTmp[iTmp] = '\0';
+    }
+  }
+  if (nLength > 0) {
+    szTmp[iTmp]= '$';
+    iTmp++;
   }
   szTmp[iTmp] = '"';
   szTmp[++iTmp] = '\0';
-
+#if 0
+  msDebug("like: %s\n", pszValue);
+  msDebug("regexp (with \\ escaping for MapServer use): %s\n", szTmp);
+#endif
   strlcat(szBuffer, szTmp, bufferSize);
   strlcat(szBuffer, ")", bufferSize);
   return msStrdup(szBuffer);
@@ -594,7 +649,7 @@ char *FLTGetFeatureIdCommonExpression(FilterEncodingNode *psFilterNode, layerObj
           char *pszTmp = NULL;
           int bufferSize = 0;
           const char* pszId = tokens[i];
-          const char* pszDot = strchr(pszId, '.');
+          const char* pszDot = strrchr(pszId, '.');
           if( pszDot )
             pszId = pszDot + 1;
 
@@ -702,14 +757,23 @@ int FLTApplyFilterToLayerCommonExpressionWithRect(mapObj *map, int iLayerIndex, 
   int save_startindex;
   int save_maxfeatures;
   int save_only_cache_result_count;
+  int save_cache_shapes;
+  int save_max_cached_shape_count;
+  int save_max_cached_shape_ram_amount;
 
   save_startindex = map->query.startindex;
   save_maxfeatures = map->query.maxfeatures;
   save_only_cache_result_count = map->query.only_cache_result_count;
+  save_cache_shapes = map->query.cache_shapes;
+  save_max_cached_shape_count = map->query.max_cached_shape_count;
+  save_max_cached_shape_ram_amount = map->query.max_cached_shape_ram_amount;
   msInitQuery(&(map->query));
   map->query.startindex = save_startindex;
   map->query.maxfeatures = save_maxfeatures;
   map->query.only_cache_result_count = save_only_cache_result_count;
+  map->query.cache_shapes = save_cache_shapes;
+  map->query.max_cached_shape_count = save_max_cached_shape_count;
+  map->query.max_cached_shape_ram_amount = save_max_cached_shape_ram_amount;
 
   map->query.mode = MS_QUERY_MULTIPLE;
   map->query.layer = iLayerIndex;

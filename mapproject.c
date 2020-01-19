@@ -806,23 +806,43 @@ msProjectRectAsPolygon(projectionObj *in, projectionObj *out,
   lineObj  ring;
   /*  pointObj ringPoints[NUMBER_OF_SAMPLE_POINTS*4+4]; */
   pointObj *ringPoints;
-  int     ix, iy;
+  int     ix, iy, ixy;
 
   double dx, dy;
 
   /* If projecting from longlat to projected */
+  /* This hack was introduced for WFS 2.0 compliance testing, but is far */
+  /* from being perfect */
   if( out && !pj_is_latlong(out->proj) && in && pj_is_latlong(in->proj) &&
       fabs(rect->minx - -180.0) < 1e-5 && fabs(rect->miny - -90.0) < 1e-5 &&
       fabs(rect->maxx - 180.0) < 1e-5 && fabs(rect->maxy - 90.0) < 1e-5) {
-    rect->minx = -1e15;
-    rect->miny = -1e15;
-    rect->maxx = 1e15;
-    rect->maxy = 1e15;
+    pointObj pointTest;
+    pointTest.x = -180;
+    pointTest.y = 85;
+    msProjectPoint(in, out, &pointTest);
+    /* Detect if we are reprojecting from EPSG:4326 to EPSG:3857 */
+    /* and if so use more plausible bounds to avoid issues with computed */
+    /* resolution for WCS */
+    if (fabs(pointTest.x - -20037508.3427892) < 1e-5 && fabs(pointTest.y - 19971868.8804086) )
+    {
+        rect->minx = -20037508.3427892;
+        rect->miny = -20037508.3427892;
+        rect->maxx = 20037508.3427892;
+        rect->maxy = 20037508.3427892;
+    }
+    else
+    {
+        rect->minx = -1e15;
+        rect->miny = -1e15;
+        rect->maxx = 1e15;
+        rect->maxy = 1e15;
+    }
     return MS_SUCCESS;
   }
 
   /* -------------------------------------------------------------------- */
-  /*      Build polygon as steps around the source rectangle.             */
+  /*      Build polygon as steps around the source rectangle              */
+  /*      and possibly its diagonal.                                      */
   /* -------------------------------------------------------------------- */
   dx = (rect->maxx - rect->minx)/NUMBER_OF_SAMPLE_POINTS;
   dy = (rect->maxy - rect->miny)/NUMBER_OF_SAMPLE_POINTS;
@@ -838,7 +858,8 @@ msProjectRectAsPolygon(projectionObj *in, projectionObj *out,
     return MS_SUCCESS;
   }
   
-  ringPoints = (pointObj*) calloc(sizeof(pointObj),NUMBER_OF_SAMPLE_POINTS*4+4);
+  /* If there is more than two sample points we will also get samples from the diagonal line */
+  ringPoints = (pointObj*) calloc(sizeof(pointObj),NUMBER_OF_SAMPLE_POINTS*5+3);
   ring.point = ringPoints;
   ring.numpoints = 0;
 
@@ -853,7 +874,7 @@ msProjectRectAsPolygon(projectionObj *in, projectionObj *out,
     }
   }
 
-  /* sample on along right side */
+  /* sample along right side */
   if(dy != 0) {
     for(iy = 1; iy <= NUMBER_OF_SAMPLE_POINTS; iy++ ) {
       ringPoints[ring.numpoints].x = rect->maxx;
@@ -869,11 +890,22 @@ msProjectRectAsPolygon(projectionObj *in, projectionObj *out,
     }
   }
 
-  /* sample on along left side */
+  /* sample along left side */
   if(dy != 0) {
     for(iy = NUMBER_OF_SAMPLE_POINTS-1; iy >= 0; iy-- ) {
       ringPoints[ring.numpoints].x = rect->minx;
       ringPoints[ring.numpoints++].y = rect->miny + iy * dy;
+    }
+  }
+
+  /* sample along diagonal line */
+  /* This is done to handle cases where reprojection from world covering projection to one */
+  /* which isn't could cause min and max values of the projected rectangle to be invalid */
+  if(dy != 0 && dx != 0) {
+    /* No need to compute corners as they've already been computed */
+    for(ixy = NUMBER_OF_SAMPLE_POINTS-2; ixy >= 1; ixy-- ) {
+      ringPoints[ring.numpoints].x = rect->minx + ixy * dx;
+      ringPoints[ring.numpoints++].y = rect->miny + ixy * dy;
     }
   }
 
@@ -930,7 +962,7 @@ msProjectRectAsPolygon(projectionObj *in, projectionObj *out,
   /*      logic.                                                          */
   /* -------------------------------------------------------------------- */
   if( out && pj_is_latlong(out->proj) && in && !pj_is_latlong(in->proj)
-      && rect->maxx - rect->minx > 360.0 ) {
+      && rect->maxx - rect->minx > 360.0 && !out->gt.need_geotransform ) {
     rect->maxx = 180;
     rect->minx = -180;
   }
@@ -940,6 +972,32 @@ msProjectRectAsPolygon(projectionObj *in, projectionObj *out,
   msSetError(MS_PROJERR, "Projection support is not available.", "msProjectRect()");
   return(MS_FAILURE);
 #endif
+}
+
+/************************************************************************/
+/*                        msProjectHasLonWrap()                         */
+/************************************************************************/
+
+int msProjectHasLonWrap(projectionObj *in, double* pdfLonWrap)
+{
+    int i;
+    if( pdfLonWrap )
+        *pdfLonWrap = 0;
+#if USE_PROJ
+    if( !pj_is_latlong(in->proj) )
+        return MS_FALSE;
+#endif
+    for( i = 0; i < in->numargs; i++ )
+    {
+        if( strncmp(in->args[i], "lon_wrap=",
+                    strlen("lon_wrap=")) == 0 )
+        {
+            if( pdfLonWrap )
+                *pdfLonWrap = atof(in->args[i] + strlen("lon_wrap="));
+            return MS_TRUE;
+        }
+    }
+    return MS_FALSE;
 }
 
 /************************************************************************/
@@ -953,7 +1011,10 @@ int msProjectRect(projectionObj *in, projectionObj *out, rectObj *rect)
 #else
   char *over = "+over";
   int ret;
+  int bFreeInOver = MS_FALSE;
+  int bFreeOutOver = MS_FALSE;
   projectionObj in_over,out_over,*inp,*outp;
+  double dfLonWrap = 0.0;
 
 #if USE_PROJ
   /* Detect projecting from north polar stereographic to longlat */
@@ -988,6 +1049,14 @@ int msProjectRect(projectionObj *in, projectionObj *out, rectObj *rect)
   }
 #endif
 
+  if(in && msProjectHasLonWrap(in, &dfLonWrap) && dfLonWrap == 180.0) {
+    inp = in;
+    outp = out;
+    if( rect->maxx > 180.0 ) {
+      rect->minx = -180.0;
+      rect->maxx = 180.0;
+    }
+  }
   /* 
    * Issue #4892: When projecting a rectangle we do not want proj to wrap resulting
    * coordinates around the dateline, as in practice a requested bounding box of
@@ -997,24 +1066,28 @@ int msProjectRect(projectionObj *in, projectionObj *out, rectObj *rect)
    *  To enforce this, we clone the input projections and add the "+over" proj 
    *  parameter in order to disable dateline wrapping.
    */ 
-  if(out) {
-    msInitProjection(&out_over);
-    msCopyProjectionExtended(&out_over,out,&over,1);
-    outp = &out_over;
-  } else {
-    outp = out;
-  }
-  if(in) {
-    msInitProjection(&in_over);
-    msCopyProjectionExtended(&in_over,in,&over,1);
-    inp = &in_over;
-  } else {
-    inp = in;
+  else {
+    if(out) {
+      bFreeOutOver = MS_TRUE;
+      msInitProjection(&out_over);
+      msCopyProjectionExtended(&out_over,out,&over,1);
+      outp = &out_over;
+    } else {
+      outp = out;
+    }
+    if(in) {
+      bFreeInOver = MS_TRUE;
+      msInitProjection(&in_over);
+      msCopyProjectionExtended(&in_over,in,&over,1);
+      inp = &in_over;
+    } else {
+      inp = in;
+    }
   }
   ret = msProjectRectAsPolygon(inp,outp, rect );
-  if(in)
+  if(bFreeInOver)
     msFreeProjection(&in_over);
-  if(out)
+  if(bFreeOutOver)
     msFreeProjection(&out_over);
   return ret;
 #endif
@@ -1132,7 +1205,11 @@ int msProjectionsDiffer( projectionObj *proj1, projectionObj *proj2 )
     int ret;
 
     ret = msProjectionsDifferInternal(proj1, proj2); 
-    if( ret ) 
+    if( ret &&
+        /* to speed up things, do normalization only if one proj is */
+        /* likely of the form init=epsg:XXX and the other proj=XXX datum=YYY... */
+        ( (proj1->numargs == 1 && proj2->numargs > 1) ||
+          (proj1->numargs > 1 && proj2->numargs == 1) ) )
     {
         projectionObj* p1normalized;
         projectionObj* p2normalized;

@@ -760,6 +760,8 @@ int msOGRWriteFromQuery( mapObj *map, outputFormatObj *format, int sendheaders )
                 "STORAGE=%s value not supported.",
                 "msOGRWriteFromQuery()",
                 storage );
+    CSLDestroy(layer_options);
+    CSLDestroy(ds_options);
     return MS_FAILURE;
   }
 
@@ -767,6 +769,7 @@ int msOGRWriteFromQuery( mapObj *map, outputFormatObj *format, int sendheaders )
   /*      Create a subdirectory to handle this request.                   */
   /* -------------------------------------------------------------------- */
   if( !EQUAL(storage,"stream") ) {
+    const char* dir_to_create;
     if (strlen(base_dir) > 0)
       request_dir = msTmpFile(map, NULL, base_dir, "" );
     else
@@ -775,15 +778,26 @@ int msOGRWriteFromQuery( mapObj *map, outputFormatObj *format, int sendheaders )
     if( request_dir[strlen(request_dir)-1] == '.' )
       request_dir[strlen(request_dir)-1] = '\0';
 
-    if( VSIMkdir( request_dir, 0777 ) != 0 ) {
+    dir_to_create = request_dir;
+    /* Workaround issue in GDAL versions released at this time :
+     * GDAL issue fixed per https://trac.osgeo.org/gdal/ticket/6991 */
+    if( EQUAL(storage,"memory") && EQUAL(format->driver+4, "ESRI Shapefile") )
+    {
+        dir_to_create = base_dir;
+    }
+
+    if( VSIMkdir( dir_to_create, 0777 ) != 0 ) {
       msSetError( MS_MISCERR,
                   "Attempt to create directory '%s' failed.",
                   "msOGRWriteFromQuery()",
-                  request_dir );
+                  dir_to_create );
+      msFree(request_dir);
+      CSLDestroy(layer_options);
+      CSLDestroy(ds_options);
       return MS_FAILURE;
     }
-  } else
-    /* handled later */;
+  }
+  /*  else handled later */
 
   /* -------------------------------------------------------------------- */
   /*      Setup the full datasource name.                                 */
@@ -807,6 +821,9 @@ int msOGRWriteFromQuery( mapObj *map, outputFormatObj *format, int sendheaders )
            "Invalid value for FILENAME option. "
            "It must not contain any directory information.",
            "msOGRWriteFromQuery()" );
+    msFree(request_dir);
+    CSLDestroy(layer_options);
+    CSLDestroy(ds_options);
     return MS_FAILURE;
   }
 
@@ -867,6 +884,7 @@ int msOGRWriteFromQuery( mapObj *map, outputFormatObj *format, int sendheaders )
                 "msOGRWriteFromQuery()",
                 datasource_name,
                 format->driver+4 );
+    CSLDestroy(layer_options);
     return MS_FAILURE;
   }
 
@@ -974,6 +992,7 @@ int msOGRWriteFromQuery( mapObj *map, outputFormatObj *format, int sendheaders )
                   "msOGRWriteFromQuery()",
                   layer->name,
                   format->driver+4 );
+      CSLDestroy(layer_options);
       return MS_FAILURE;
     }
 
@@ -1042,6 +1061,7 @@ int msOGRWriteFromQuery( mapObj *map, outputFormatObj *format, int sendheaders )
         OGR_DS_Destroy( hDS );
         msOGRCleanupDS( datasource_name );
         msGMLFreeItems(item_list);
+        CSLDestroy(layer_options);
         return MS_FAILURE;
       }
 
@@ -1062,6 +1082,7 @@ int msOGRWriteFromQuery( mapObj *map, outputFormatObj *format, int sendheaders )
           OGR_DS_Destroy( hDS );
           msOGRCleanupDS( datasource_name );
           msGMLFreeItems(item_list);
+          CSLDestroy(layer_options);
           return status;
         }
       }
@@ -1079,13 +1100,22 @@ int msOGRWriteFromQuery( mapObj *map, outputFormatObj *format, int sendheaders )
       /*
       ** Read the shape.
       */
-      status = msLayerGetShape(layer, &resultshape, &(layer->resultcache->results[i]));
-      if(status != MS_SUCCESS) {
-        OGR_DS_Destroy( hDS );
-        msOGRCleanupDS( datasource_name );
-        msGMLFreeItems(item_list);
-        msFreeShape(&resultshape);
-        return status;
+      if( layer->resultcache->results[i].shape )
+      {
+          /* msDebug("Using cached shape %ld\n", layer->resultcache->results[i].shapeindex); */
+          msCopyShape(layer->resultcache->results[i].shape, &resultshape);
+      }
+      else
+      {
+        status = msLayerGetShape(layer, &resultshape, &(layer->resultcache->results[i]));
+        if(status != MS_SUCCESS) {
+            OGR_DS_Destroy( hDS );
+            msOGRCleanupDS( datasource_name );
+            msGMLFreeItems(item_list);
+            msFreeShape(&resultshape);
+            CSLDestroy(layer_options);
+            return status;
+        }
       }
 
       /*
@@ -1135,6 +1165,7 @@ int msOGRWriteFromQuery( mapObj *map, outputFormatObj *format, int sendheaders )
         msOGRCleanupDS( datasource_name );
         msGMLFreeItems(item_list);
         msFreeShape(&resultshape);
+        CSLDestroy(layer_options);
         return status;
       }
     }
@@ -1147,6 +1178,8 @@ int msOGRWriteFromQuery( mapObj *map, outputFormatObj *format, int sendheaders )
   /*      Close the datasource.                                           */
   /* -------------------------------------------------------------------- */
   OGR_DS_Destroy( hDS );
+
+  CSLDestroy( layer_options );
 
   /* -------------------------------------------------------------------- */
   /*      Get list of resulting files.                                    */
@@ -1349,7 +1382,6 @@ int msOGRWriteFromQuery( mapObj *map, outputFormatObj *format, int sendheaders )
 
   msOGRCleanupDS( datasource_name );
 
-  CSLDestroy( layer_options );
   CSLDestroy( file_list );
 
   return MS_SUCCESS;

@@ -60,6 +60,7 @@ typedef struct ms_ogr_file_info_t {
   OGRFeatureH hLastFeature;
 
   int         nTileId;                  /* applies on the tiles themselves. */
+  projectionObj sTileProj;              /* applies on the tiles themselves. */
 
   struct ms_ogr_file_info_t *poCurTile; /* exists on tile index, -> tiles */
   bool        rect_is_defined;
@@ -75,7 +76,7 @@ typedef struct ms_ogr_file_info_t {
   char *pszRowId;
   int   bIsOKForSQLCompose;
   bool  bHasSpatialIndex; // used only for spatialite for now
-  char* pszTablePrefix; // prefix to qualify field names. used only for spatialite for now when a join is done for spatial filtering.
+  char* pszTablePrefix; // prefix to qualify field names. used only for spatialite & gpkg for now when a join is done for spatial filtering.
 
   int   bPaging;
 
@@ -1286,6 +1287,7 @@ msOGRFileOpen(layerObj *layer, const char *connection )
   psInfo->hLayer = hLayer;
 
   psInfo->nTileId = 0;
+  msInitProjection(&(psInfo->sTileProj));
   psInfo->poCurTile = NULL;
   psInfo->rect_is_defined = false;
   psInfo->rect.minx = psInfo->rect.maxx = 0;
@@ -1333,6 +1335,7 @@ msOGRFileOpen(layerObj *layer, const char *connection )
     }
 
     CPLPopErrorHandler();
+    CPLErrorReset();
 
     if (have_spatialite)
         psInfo->dialect = "Spatialite";
@@ -1378,10 +1381,12 @@ msOGRFileOpen(layerObj *layer, const char *connection )
             OGR_DS_ReleaseResultSet(hDS, l);
         }
         CPLPopErrorHandler();
+        CPLErrorReset();
 
         if( have_gpkg_spatialite )
         {
             psInfo->pszMainTableName = msStrdup( OGR_L_GetName(hLayer) );
+            psInfo->pszTablePrefix = msStrdup( psInfo->pszMainTableName );
             psInfo->pszSpatialFilterTableName = msStrdup( OGR_L_GetName(hLayer) );
             psInfo->pszSpatialFilterGeometryColumn = msStrdup( OGR_L_GetGeometryColumn(hLayer) );
             psInfo->dialect = "GPKG";
@@ -1554,7 +1559,10 @@ static void msOGRFileOpenSpatialite( layerObj *layer,
   // side evaluation by unsetting it.
   if( !psInfo->bIsOKForSQLCompose && psInfo->dialect != NULL )
   {
-      msDebug("msOGRFileOpen(): Falling back to MapServer only evaluation\n");
+      if (layer->debug >= MS_DEBUGLEVEL_VVV)
+      {
+        msDebug("msOGRFileOpen(): Falling back to MapServer only evaluation\n");
+      }
       psInfo->dialect = NULL;
   }
 
@@ -1562,8 +1570,11 @@ static void msOGRFileOpenSpatialite( layerObj *layer,
   if (msLayerGetProcessingKey(layer, "USE_SPATIAL_INDEX") != NULL &&
       !CSLTestBoolean(msLayerGetProcessingKey(layer, "USE_SPATIAL_INDEX")) )
   {
-      msDebug("msOGRFileOpen(): Layer %s has spatial index disabled by processing option\n",
-              pszLayerDef);
+      if (layer->debug >= MS_DEBUGLEVEL_VVV)
+      {
+        msDebug("msOGRFileOpen(): Layer %s has spatial index disabled by processing option\n",
+                pszLayerDef);
+      }
   }
   // Test if spatial index is available
   else if( psInfo->dialect != NULL )
@@ -1597,8 +1608,11 @@ static void msOGRFileOpenSpatialite( layerObj *layer,
 
       if( !psInfo->bHasSpatialIndex )
       {
-          msDebug("msOGRFileOpen(): Layer %s has no spatial index table\n",
-                  pszLayerDef);
+          if (layer->debug >= MS_DEBUGLEVEL_VVV)
+          {
+            msDebug("msOGRFileOpen(): Layer %s has no spatial index table\n",
+                    pszLayerDef);
+          }
       }
       else
       {
@@ -1629,13 +1643,19 @@ static void msOGRFileOpenSpatialite( layerObj *layer,
 
           if( !psInfo->bHasSpatialIndex )
           {
-            msDebug("msOGRFileOpen(): Layer %s has spatial index disabled\n",
-                    pszLayerDef);
+            if (layer->debug >= MS_DEBUGLEVEL_VVV)
+            {
+              msDebug("msOGRFileOpen(): Layer %s has spatial index disabled\n",
+                      pszLayerDef);
+            }
           }
           else
           {
-            msDebug("msOGRFileOpen(): Layer %s has spatial index enabled\n",
-                    pszLayerDef);
+            if (layer->debug >= MS_DEBUGLEVEL_VVV)
+            {
+              msDebug("msOGRFileOpen(): Layer %s has spatial index enabled\n",
+                      pszLayerDef);
+            }
 
             psInfo->pszTablePrefix = msStrdup( psInfo->pszMainTableName );
           }
@@ -1693,7 +1713,8 @@ static int msOGRFileClose(layerObj *layer, msOGRFileInfo *psInfo )
   // Free current tile if there is one.
   if( psInfo->poCurTile != NULL )
     msOGRFileClose( layer, psInfo->poCurTile );
-  
+
+  msFreeProjection(&(psInfo->sTileProj));
   msFree(psInfo->pszSelect);
   msFree(psInfo->pszSpatialFilterTableName);
   msFree(psInfo->pszSpatialFilterGeometryColumn);
@@ -1914,12 +1935,14 @@ char *msOGRGetToken(layerObj* layer, tokenListNodeObjPtr *node) {
             }
             else if (c == '.')
                 c = wild_one;
-
-            if (i == 0 && c == '^') {
+            else if (i == 0 && c == '^') {
                 i++;
                 continue;
             }
-                
+            else if( c == '$' && c_next == 0 ) {
+                break;
+            }
+
             re[j++] = c;
             i++;
                 
@@ -2452,7 +2475,7 @@ static int msOGRFileWhichShapes(layerObj *layer, rectObj rect, msOGRFileInfo *ps
 
         if ( !bOffsetAlreadyAdded && psInfo->bPaging && layer->startindex > 0 ) {
             char szOffset[50];
-            snprintf(szOffset, sizeof(szOffset), " OFFSET %d", layer->startindex);
+            snprintf(szOffset, sizeof(szOffset), " OFFSET %d", layer->startindex-1);
             select = msStringConcatenate(select, szOffset);
         }
 
@@ -3052,6 +3075,16 @@ NextFile:
   connection = msStrdup( OGR_F_GetFieldAsString( hFeature,
                          layer->tileitemindex ));
 
+  char* pszSRS = NULL;
+  if( layer->tilesrs != NULL )
+  {
+      int idx = OGR_F_GetFieldIndex( hFeature, layer->tilesrs);
+      if( idx >= 0 )
+      {
+          pszSRS = msStrdup( OGR_F_GetFieldAsString( hFeature, idx ));
+      }
+  }
+
   nFeatureId = (int)OGR_F_GetFID( hFeature ); // FIXME? GetFID() is a 64bit integer in GDAL 2.0
 
   OGR_F_Destroy( hFeature );
@@ -3071,7 +3104,21 @@ NextFile:
 #endif
 
   if( psTileInfo == NULL )
+  {
+    msFree(pszSRS);
     return MS_FAILURE;
+  }
+  
+  if( pszSRS != NULL )
+  {
+    if( msOGCWKT2ProjectionObj( pszSRS, &(psInfo->sTileProj),
+                                layer->debug ) != MS_SUCCESS )
+    {
+        msFree(pszSRS);
+        return MS_FAILURE;
+    }
+    msFree(pszSRS);
+  }
 
   psTileInfo->nTileId = nFeatureId;
 
@@ -3079,7 +3126,16 @@ NextFile:
   /*      Initialize the spatial query on this file.                      */
   /* -------------------------------------------------------------------- */
   if( psInfo->rect.minx != 0 || psInfo->rect.maxx != 0 ) {
-    status = msOGRFileWhichShapes( layer, psInfo->rect, psTileInfo );
+    rectObj rect = psInfo->rect;
+
+#ifdef USE_PROJ
+    if( layer->tileindex != NULL && psInfo->sTileProj.numargs > 0 )
+    {
+      msProjectRect(&(layer->projection), &(psInfo->sTileProj), &rect);
+    }
+#endif
+
+    status = msOGRFileWhichShapes( layer, rect, psTileInfo );
     if( status != MS_SUCCESS )
       return status;
   }
@@ -3268,6 +3324,7 @@ static msExprNode* BuildExprTree(tokenListNodeObjPtr node,
         {
             if( node->next && node->next->token == '(' )
             {
+                int node_token = node->token;
                 msExprNode* subExpr = BuildExprTree(node->next->next, &node,
                                                     nParenthesisLevel + 1);
                 if( subExpr == NULL )
@@ -3275,7 +3332,7 @@ static msExprNode* BuildExprTree(tokenListNodeObjPtr node,
                     goto fail;
                 }
                 msExprNode* newNode = new msExprNode;
-                newNode->m_nToken = node->token;
+                newNode->m_nToken = node_token;
                 if( subExpr->m_nToken == 0 )
                 {
                     newNode->m_aoChildren = subExpr->m_aoChildren;
@@ -3393,6 +3450,8 @@ fail:
 
 /**********************************************************************
  *                 msOGRExtractTopSpatialFilter()
+ * 
+ * Recognize expressions like "Intersects([shape], wkt) == TRUE [AND ....]"
  **********************************************************************/
 static int  msOGRExtractTopSpatialFilter( msOGRFileInfo *info,
                                           const msExprNode* expr,
@@ -3401,7 +3460,16 @@ static int  msOGRExtractTopSpatialFilter( msOGRFileInfo *info,
   if( expr == NULL )
       return MS_FALSE;
 
-  if( expr->m_nToken == MS_TOKEN_COMPARISON_INTERSECTS &&
+  if( expr->m_nToken == MS_TOKEN_COMPARISON_EQ &&
+      expr->m_aoChildren.size() == 2 &&
+      expr->m_aoChildren[1]->m_nToken == MS_TOKEN_LITERAL_BOOLEAN &&
+      expr->m_aoChildren[1]->m_dfVal == 1.0 )
+  {
+      return msOGRExtractTopSpatialFilter(info, expr->m_aoChildren[0],
+                                          pSpatialFilterNode);
+  }
+
+  if( (expr->m_nToken == MS_TOKEN_COMPARISON_INTERSECTS || expr->m_nToken == MS_TOKEN_COMPARISON_CONTAINS ) &&
       expr->m_aoChildren.size() == 2 &&
       expr->m_aoChildren[1]->m_nToken == MS_TOKEN_LITERAL_SHAPE )
   {
@@ -3578,6 +3646,8 @@ static std::string msOGRTranslatePartialInternal(layerObj* layer,
             {
                 if( i == 0 && expr->m_aoChildren[1]->m_osVal[i] == '^' )
                     continue;
+                if( i == nSize-1 && expr->m_aoChildren[1]->m_osVal[i] == '$' )
+                    break;
                 if( expr->m_aoChildren[1]->m_osVal[i] == '.' )
                 {
                     if( i+1<nSize &&
@@ -3980,23 +4050,10 @@ int msOGRLayerOpen(layerObj *layer, const char *pszOverrideConnection)
     if( layer->layerinfo == NULL )
       return MS_FAILURE;
 
-    if( layer->tilesrs != NULL ) {
-      msSetError(MS_OGRERR,
-                 "TILESRS not supported in vector layers.",
-                 "msOGRLayerOpen()");
-      return MS_FAILURE;
-    }
-
     // Identify TILEITEM
-
     OGRFeatureDefnH hDefn = OGR_L_GetLayerDefn( psInfo->hLayer );
-    for( layer->tileitemindex = 0;
-         layer->tileitemindex < OGR_FD_GetFieldCount( hDefn )
-         && !EQUAL( OGR_Fld_GetNameRef( OGR_FD_GetFieldDefn( hDefn, layer->tileitemindex) ),
-                    layer->tileitem);
-         layer->tileitemindex++ ) {}
-
-    if( layer->tileitemindex == OGR_FD_GetFieldCount( hDefn ) ) {
+    layer->tileitemindex = OGR_FD_GetFieldIndex(hDefn, layer->tileitem);
+    if( layer->tileitemindex < 0 ) {
       msSetError(MS_OGRERR,
                  "Can't identify TILEITEM %s field in TILEINDEX `%s'.",
                  "msOGRLayerOpen()",
@@ -4004,6 +4061,29 @@ int msOGRLayerOpen(layerObj *layer, const char *pszOverrideConnection)
       msOGRFileClose( layer, psInfo );
       layer->layerinfo = NULL;
       return MS_FAILURE;
+    }
+
+    // Identify TILESRS
+    if( layer->tilesrs != NULL &&
+        OGR_FD_GetFieldIndex(hDefn, layer->tilesrs) < 0 ) {
+      msSetError(MS_OGRERR,
+                 "Can't identify TILESRS %s field in TILEINDEX `%s'.",
+                 "msOGRLayerOpen()",
+                 layer->tilesrs, layer->tileindex );
+      msOGRFileClose( layer, psInfo );
+      layer->layerinfo = NULL;
+      return MS_FAILURE;
+    }
+    if( layer->tilesrs != NULL && layer->projection.numargs == 0 )
+    {
+        msSetError(MS_OGRERR,
+                 "A layer with TILESRS set in TILEINDEX `%s' must have a "
+                 "projection set on itself.",
+                 "msOGRLayerOpen()",
+                 layer->tileindex );
+        msOGRFileClose( layer, psInfo );
+        layer->layerinfo = NULL;
+        return MS_FAILURE;
     }
   }
 
@@ -4346,7 +4426,7 @@ static int msOGRLayerInitItemInfo(layerObj *layer)
     }
     if(itemindexes[i] == -1) {
       msSetError(MS_OGRERR,
-                 "Invalid Field name: %s in layer '%s'",
+                 "Invalid Field name: %s in layer `%s'",
                  "msOGRLayerInitItemInfo()",
                  layer->items[i], layer->name ? layer->name : "(null)");
       return(MS_FAILURE);
@@ -4425,7 +4505,16 @@ int msOGRLayerNextShape(layerObj *layer, shapeObj *shape)
     // Try getting a shape from this tile.
     status = msOGRFileNextShape( layer, shape, psInfo->poCurTile );
     if( status != MS_DONE )
+    {
+#ifdef USE_PROJ
+      if( psInfo->sTileProj.numargs > 0 )
+      {
+        msProjectShape(&(psInfo->sTileProj), &(layer->projection), shape);
+      }
+#endif
+
       return status;
+    }
 
     // try next tile.
     status = msOGRFileReadTile( layer, psInfo );
@@ -4482,7 +4571,14 @@ int msOGRLayerGetShape(layerObj *layer, shapeObj *shape, resultObj *record)
         return MS_FAILURE;
     }
 
-    return msOGRFileGetShape(layer, shape, shapeindex, psInfo->poCurTile, record_is_fid );
+    int status = msOGRFileGetShape(layer, shape, shapeindex, psInfo->poCurTile, record_is_fid );
+#ifdef USE_PROJ
+    if( status == MS_SUCCESS && psInfo->sTileProj.numargs > 0 )
+    {
+      msProjectShape(&(psInfo->sTileProj), &(layer->projection), shape);
+    }
+#endif
+    return status;
   }
 #else
   /* ------------------------------------------------------------------
@@ -4588,7 +4684,6 @@ int msOGRLayerGetNumFeatures(layerObj *layer)
 
 #endif /* USE_OGR */
 }
-
 
 /**********************************************************************
  *                     msOGRGetSymbolId()
@@ -4956,7 +5051,7 @@ static int msOGRUpdateStyleParseLabel(mapObj *map, layerObj *layer, classObj *c,
       /* replace spaces with hyphens to allow mapping to a valid hashtable entry*/
       char* pszFontNameEscaped = NULL;
       if (pszFontName != NULL) {
-          pszFontNameEscaped = strdup(pszFontName);
+          pszFontNameEscaped = msStrdup(pszFontName);
           msReplaceChar(pszFontNameEscaped, ' ', '-');
       }
 
@@ -5428,7 +5523,6 @@ void msOGRCleanup( void )
   ACQUIRE_OGR_LOCK;
   if( bOGRDriversRegistered == MS_TRUE ) {
     CPLPopErrorHandler();
-    OGRCleanupAll();
     bOGRDriversRegistered = MS_FALSE;
   }
   RELEASE_OGR_LOCK;
@@ -5542,6 +5636,7 @@ int msOGRLayerInitializeVirtualTable(layerObj *layer)
   layer->vtable->LayerWhichShapes = msOGRLayerWhichShapes;
   layer->vtable->LayerNextShape = msOGRLayerNextShape;
   layer->vtable->LayerGetShape = msOGRLayerGetShape;
+  /* layer->vtable->LayerGetShapeCount, use default */
   layer->vtable->LayerClose = msOGRLayerClose;
   layer->vtable->LayerGetItems = msOGRLayerGetItems;
   layer->vtable->LayerGetExtent = msOGRLayerGetExtent;
