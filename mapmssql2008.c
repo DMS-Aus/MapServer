@@ -1138,18 +1138,18 @@ static int getMSSQLMajorVersion(layerObj* layer)
   return layerinfo->mssqlversion_major;
 }
 
-static int addFilter(layerObj *layer, char *query)
+static int addFilter(layerObj *layer, char **query)
 {
   if (layer->filter.native_string) {
-    query = msStringConcatenate(query, " WHERE (");
-    query = msStringConcatenate(query, layer->filter.native_string);
-    query = msStringConcatenate(query, ")");
+    (*query) = msStringConcatenate(*query, " WHERE (");
+    (*query) = msStringConcatenate(*query, layer->filter.native_string);
+    (*query) = msStringConcatenate(*query, ")");
     return MS_TRUE;
   }
   else if (msLayerGetProcessingKey(layer, "NATIVE_FILTER") != NULL) {
-    query = msStringConcatenate(query, " WHERE (");
-    query = msStringConcatenate(query, msLayerGetProcessingKey(layer, "NATIVE_FILTER"));
-    query = msStringConcatenate(query, ")");
+    (*query) = msStringConcatenate(*query, " WHERE (");
+    (*query) = msStringConcatenate(*query, msLayerGetProcessingKey(layer, "NATIVE_FILTER"));
+    (*query) = msStringConcatenate(*query, ")");
     return MS_TRUE;
   }
 
@@ -1201,7 +1201,7 @@ int msMSSQL2008LayerGetExtent(layerObj *layer, rectObj *extent)
       }
 
       /* adding attribute filter */
-      addFilter(layer, query);
+      addFilter(layer, &query);
 
       query = msStringConcatenate(query, ") AS extentcol FROM ");
       query = msStringConcatenate(query, layerinfo->geom_table);
