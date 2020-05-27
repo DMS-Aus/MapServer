@@ -1138,6 +1138,24 @@ static int getMSSQLMajorVersion(layerObj* layer)
   return layerinfo->mssqlversion_major;
 }
 
+static int addFilter(layerObj *layer, char *query)
+{
+  if (layer->filter.native_string) {
+    query = msStringConcatenate(query, " WHERE (");
+    query = msStringConcatenate(query, layer->filter.native_string);
+    query = msStringConcatenate(query, ")");
+    return MS_TRUE;
+  }
+  else if (msLayerGetProcessingKey(layer, "NATIVE_FILTER") != NULL) {
+    query = msStringConcatenate(query, " WHERE (");
+    query = msStringConcatenate(query, msLayerGetProcessingKey(layer, "NATIVE_FILTER"));
+    query = msStringConcatenate(query, ")");
+    return MS_TRUE;
+  }
+
+  return MS_FALSE;
+}
+
 /* Get the layer extent as specified in the mapfile or a largest area */
 /* covering all features */
 int msMSSQL2008LayerGetExtent(layerObj *layer, rectObj *extent)
@@ -1181,6 +1199,10 @@ int msMSSQL2008LayerGetExtent(layerObj *layer, rectObj *extent)
         query = msStringConcatenate(query, "WITH extent(extentcol) AS (SELECT geometry::EnvelopeAggregate(");
         query = msStringConcatenate(query, layerinfo->geom_column);        
       }
+
+      /* adding attribute filter */
+      addFilter(layer, query);
+
       query = msStringConcatenate(query, ") AS extentcol FROM ");
       query = msStringConcatenate(query, layerinfo->geom_table);
       query = msStringConcatenate(query, ") SELECT extentcol.STPointN(1).STX, extentcol.STPointN(1).STY, extentcol.STPointN(3).STX, extentcol.STPointN(3).STY FROM extent");
@@ -1199,6 +1221,10 @@ int msMSSQL2008LayerGetExtent(layerObj *layer, rectObj *extent)
       }
       query = msStringConcatenate(query, ".STEnvelope() as envelope from ");
       query = msStringConcatenate(query, layerinfo->geom_table);
+
+      /* adding attribute filter */
+      addFilter(layer, query);
+
       query = msStringConcatenate(query, "), CORNERS as (SELECT envelope.STPointN(1) as point from ENVELOPE UNION ALL select envelope.STPointN(3) from ENVELOPE) SELECT MIN(point.STX), MIN(point.STY), MAX(point.STX), MAX(point.STY) FROM CORNERS");
     }
 
@@ -1220,7 +1246,7 @@ int msMSSQL2008LayerGetExtent(layerObj *layer, rectObj *extent)
     }
 
     rc = SQLGetData(layerinfo->conn->hstmt, 1, SQL_C_CHAR, result_data, sizeof(result_data), &retLen);
-    if (rc == SQL_ERROR) {
+    if (rc == SQL_ERROR || retLen < 0) {
         msSetError(MS_QUERYERR, "Failed to get MinX value", "msMSSQL2008LayerGetExtent()");
         return MS_FAILURE;
     }
@@ -1230,7 +1256,7 @@ int msMSSQL2008LayerGetExtent(layerObj *layer, rectObj *extent)
     extent->minx = atof(result_data);
 
     rc = SQLGetData(layerinfo->conn->hstmt, 2, SQL_C_CHAR, result_data, sizeof(result_data), &retLen);
-    if (rc == SQL_ERROR) {
+    if (rc == SQL_ERROR || retLen < 0) {
         msSetError(MS_QUERYERR, "Failed to get MinY value", "msMSSQL2008LayerGetExtent()");
         return MS_FAILURE;
     }
@@ -1240,7 +1266,7 @@ int msMSSQL2008LayerGetExtent(layerObj *layer, rectObj *extent)
     extent->miny = atof(result_data);
 
     rc = SQLGetData(layerinfo->conn->hstmt, 3, SQL_C_CHAR, result_data, sizeof(result_data), &retLen);
-    if (rc == SQL_ERROR) {
+    if (rc == SQL_ERROR || retLen < 0) {
         msSetError(MS_QUERYERR, "Failed to get MaxX value", "msMSSQL2008LayerGetExtent()");
         return MS_FAILURE;
     }
@@ -1250,7 +1276,7 @@ int msMSSQL2008LayerGetExtent(layerObj *layer, rectObj *extent)
     extent->maxx = atof(result_data);
 
     rc = SQLGetData(layerinfo->conn->hstmt, 4, SQL_C_CHAR, result_data, sizeof(result_data), &retLen);
-    if (rc == SQL_ERROR) {
+    if (rc == SQL_ERROR || retLen < 0) {
         msSetError(MS_QUERYERR, "Failed to get MaxY value", "msMSSQL2008LayerGetExtent()");
         return MS_FAILURE;
     }
@@ -1287,16 +1313,7 @@ int msMSSQL2008LayerGetNumFeatures(layerObj *layer)
     query = msStringConcatenate(query, layerinfo->geom_table);
 
     /* adding attribute filter */
-    if (layer->filter.native_string) {
-        query = msStringConcatenate(query, " WHERE (");
-        query = msStringConcatenate(query, layer->filter.native_string);
-        query = msStringConcatenate(query, ")");
-    }
-    else if (msLayerGetProcessingKey(layer, "NATIVE_FILTER") != NULL) {
-        query = msStringConcatenate(query, " WHERE (");
-        query = msStringConcatenate(query, msLayerGetProcessingKey(layer, "NATIVE_FILTER"));
-        query = msStringConcatenate(query, ")");
-    }
+    addFilter(layer, query);
 
     if (!executeSQL(layerinfo->conn, query)) {
         msFree(query);
@@ -1482,18 +1499,7 @@ static int prepare_database(layerObj *layer, rectObj rect, char **query_string)
   }
 
   /* adding attribute filter */
-  if (layer->filter.native_string) {
-      query = msStringConcatenate(query, " WHERE (");
-      query = msStringConcatenate(query, layer->filter.native_string);
-      query = msStringConcatenate(query, ")");
-      hasFilter = MS_TRUE;
-  }
-  else if (msLayerGetProcessingKey(layer, "NATIVE_FILTER") != NULL) {
-      query = msStringConcatenate(query, " WHERE (");
-      query = msStringConcatenate(query, msLayerGetProcessingKey(layer, "NATIVE_FILTER"));
-      query = msStringConcatenate(query, ")");
-      hasFilter = MS_TRUE;
-  }
+  hasFilter = addFilter(layer, query);
 
   /* adding spatial filter */
   if (hasFilter == MS_FALSE)
