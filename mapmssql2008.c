@@ -1200,11 +1200,12 @@ int msMSSQL2008LayerGetExtent(layerObj *layer, rectObj *extent)
         query = msStringConcatenate(query, layerinfo->geom_column);        
       }
 
+      query = msStringConcatenate(query, ") AS extentcol FROM ");
+      query = msStringConcatenate(query, layerinfo->geom_table);
+
       /* adding attribute filter */
       addFilter(layer, &query);
 
-      query = msStringConcatenate(query, ") AS extentcol FROM ");
-      query = msStringConcatenate(query, layerinfo->geom_table);
       query = msStringConcatenate(query, ") SELECT extentcol.STPointN(1).STX, extentcol.STPointN(1).STY, extentcol.STPointN(3).STX, extentcol.STPointN(3).STY FROM extent");
     }
     else {
