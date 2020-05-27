@@ -1223,7 +1223,7 @@ int msMSSQL2008LayerGetExtent(layerObj *layer, rectObj *extent)
       query = msStringConcatenate(query, layerinfo->geom_table);
 
       /* adding attribute filter */
-      addFilter(layer, query);
+      addFilter(layer, &query);
 
       query = msStringConcatenate(query, "), CORNERS as (SELECT envelope.STPointN(1) as point from ENVELOPE UNION ALL select envelope.STPointN(3) from ENVELOPE) SELECT MIN(point.STX), MIN(point.STY), MAX(point.STX), MAX(point.STY) FROM CORNERS");
     }
@@ -1313,7 +1313,7 @@ int msMSSQL2008LayerGetNumFeatures(layerObj *layer)
     query = msStringConcatenate(query, layerinfo->geom_table);
 
     /* adding attribute filter */
-    addFilter(layer, query);
+    addFilter(layer, &query);
 
     if (!executeSQL(layerinfo->conn, query)) {
         msFree(query);
@@ -1499,7 +1499,7 @@ static int prepare_database(layerObj *layer, rectObj rect, char **query_string)
   }
 
   /* adding attribute filter */
-  hasFilter = addFilter(layer, query);
+  hasFilter = addFilter(layer, &query);
 
   /* adding spatial filter */
   if (hasFilter == MS_FALSE)
