@@ -1490,7 +1490,7 @@ int msDrawQueryLayer(mapObj *map, layerObj *layer, imageObj *image)
   /* if MS_HILITE, restore color and mindistance values */
   if(map->querymap.style == MS_HILITE) {
     for(i=0; i<layer->numclasses; i++) {
-      if(layer->type == MS_LAYER_POLYGON) {
+      if(layer->type == MS_LAYER_POLYGON && layer->class[i]->numstyles > 0) {
         if(MS_VALID_COLOR(layer->class[i]->styles[0]->color))
           layer->class[i]->styles[0]->color = colorbuffer[i];
         else if(MS_VALID_COLOR(layer->class[i]->styles[0]->outlinecolor))
