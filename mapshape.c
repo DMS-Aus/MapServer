@@ -1399,6 +1399,7 @@ void msSHPReadShape( SHPHandle psSHP, int hEntity, shapeObj *shape )
         while(--i >= 0)
           free(shape->line[i].point);
         free(shape->line);
+        shape->line = NULL;
         shape->numlines = 0;
         shape->type = MS_SHAPE_NULL;
         msSetError(MS_MEMERR, "Out of memory", "msSHPReadShape()");
@@ -1494,6 +1495,8 @@ void msSHPReadShape( SHPHandle psSHP, int hEntity, shapeObj *shape )
 
     if (nPoints < 0 || nPoints > 50 * 1000 * 1000) {
       free(shape->line);
+      shape->line = NULL;
+      shape->numlines = 0;
       shape->type = MS_SHAPE_NULL;
       msSetError(MS_SHPERR, "Corrupted .shp file : shape %d, nPoints=%d.",
                  "msSHPReadShape()", hEntity, nPoints);
@@ -1505,6 +1508,8 @@ void msSHPReadShape( SHPHandle psSHP, int hEntity, shapeObj *shape )
       nRequiredSize += 16 + nPoints * 8;
     if (nRequiredSize > nEntitySize) {
       free(shape->line);
+      shape->line = NULL;
+      shape->numlines = 0;
       shape->type = MS_SHAPE_NULL;
       msSetError(MS_SHPERR, "Corrupted .shp file : shape %d : nPoints = %d, nEntitySize = %d",
                  "msSHPReadShape()", hEntity, nPoints, nEntitySize);
@@ -1516,6 +1521,7 @@ void msSHPReadShape( SHPHandle psSHP, int hEntity, shapeObj *shape )
     shape->line[0].point = (pointObj *) malloc( nPoints * sizeof(pointObj) );
     if (shape->line[0].point == NULL) {
       free(shape->line);
+      shape->line = NULL;
       shape->numlines = 0;
       shape->type = MS_SHAPE_NULL;
       msSetError(MS_MEMERR, "Out of memory", "msSHPReadShape()");
