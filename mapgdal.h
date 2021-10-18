@@ -2,11 +2,11 @@
  * $Id$
  *
  * Project:  MapServer
- * Purpose:  Declarations supporting mapserv.c.
- * Author:   Steve Lime and the MapServer team.
+ * Purpose:  GDAL interface
+ * Author:   Even Rouault <even.rouault at spatialys.com>
  *
  ******************************************************************************
- * Copyright (c) 1996-2005 Regents of the University of Minnesota.
+ * Copyright (c) 2020, Even Rouault <even.rouault at spatialys.com>
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
  * copy of this software and associated documentation files (the "Software"),
@@ -27,47 +27,24 @@
  * DEALINGS IN THE SOFTWARE.
  ****************************************************************************/
 
-#ifndef MAPSERV_H
-#define MAPSERV_H
+#ifndef MAPGDAL_H
+#define MAPGDAL_H
 
-#if defined(_WIN32) && !defined(__CYGWIN__)
-#include <process.h>
+#ifdef USE_GDAL
+
+#include "mapserver.h"
+#include "gdal.h"
+
+#ifdef __cplusplus
+extern "C" {
 #endif
 
-#include <ctype.h>
-#include <time.h>
+int msGDALDriverSupportsVirtualIOOutput( GDALDriverH hDriver );
 
-#include "maptemplate.h"
-#include "maptile.h"
+#ifdef __cplusplus
+}
+#endif
 
-#include "cgiutil.h"
+#endif /* USE_GDAL */
 
-/*
-** Defines
-*/
-#define NUMEXP "[-]?(([0-9]+)|([0-9]*[.][0-9]+)([eE][-+]?[0-9]+)?)"
-#define EXTENT_PADDING .05
-
-/*
-** Macros
-*/
-#define TEMPLATE_TYPE(s)  (((strncmp("http://", s, 7) == 0) || (strncmp("https://", s, 8) == 0) || (strncmp("ftp://", s, 6)) == 0)  ? MS_URL : MS_FILE)
-
-MS_DLL_EXPORT int msCGIWriteLog(mapservObj *mapserv, int show_error);
-MS_DLL_EXPORT void msCGIWriteError(mapservObj *mapserv);
-MS_DLL_EXPORT mapObj *msCGILoadMap(mapservObj *mapserv);
-int msCGISetMode(mapservObj *mapserv);
-int msCGILoadForm(mapservObj *mapserv);
-int msCGIDispatchBrowseRequest(mapservObj *mapserv);
-int msCGIDispatchCoordinateRequest(mapservObj *mapserv);
-int msCGIDispatchQueryRequest(mapservObj *mapserv);
-int msCGIDispatchImageRequest(mapservObj *mapserv);
-int msCGIDispatchLegendRequest(mapservObj *mapserv);
-int msCGIDispatchLegendIconRequest(mapservObj *mapserv);
-MS_DLL_EXPORT int msCGIDispatchRequest(mapservObj *mapserv);
-
-
-
-
-
-#endif /* MAPSERV_H */
+#endif /* MAPGDAL_H */
