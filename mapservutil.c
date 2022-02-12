@@ -199,7 +199,11 @@ mapObj *msCGILoadMap(mapservObj *mapserv)
   int i, j;
   mapObj *map = NULL;
 
-  const char *ms_map_bad_pattern_default = "[/\\]{2}|[/\\]?\\.+[/\\]|,";
+#ifdef _WIN32
+  const char *ms_map_bad_pattern_default = "[/\\]?\\.+[/\\]|,";
+#else
+  const char* ms_map_bad_pattern_default = "[/\\]{2}|[/\\]?\\.+[/\\]|,";
+#endif
   const char *ms_map_env_bad_pattern_default = "^(AUTH_.*|CERT_.*|CONTENT_(LENGTH|TYPE)|DOCUMENT_(ROOT|URI)|GATEWAY_INTERFACE|HTTP.*|QUERY_STRING|PATH_(INFO|TRANSLATED)|REMOTE_.*|REQUEST_(METHOD|URI)|SCRIPT_(FILENAME|NAME)|SERVER_.*)";
 
   int ms_mapfile_tainted = MS_TRUE;
