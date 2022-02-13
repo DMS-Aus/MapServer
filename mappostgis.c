@@ -3906,7 +3906,12 @@ void msPostGISEnablePaging(layerObj *layer, int value)
   }
 
   if(!msPostGISLayerIsOpen(layer))
-    msPostGISLayerOpen(layer);
+  {
+    if(msPostGISLayerOpen(layer) != MS_SUCCESS)
+    {
+      return;
+    }
+  }
 
   assert( layer->layerinfo != NULL);
 
