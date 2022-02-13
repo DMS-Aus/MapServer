@@ -5579,10 +5579,12 @@ static void msOGREnablePaging(layerObj *layer, int value)
   }
 
   if(!msOGRLayerIsOpen(layer))
-    msOGRLayerOpenVT(layer);
-
-  if (!layer->layerinfo)
+  {
+    if(msOGRLayerOpenVT(layer) != MS_SUCCESS)
+    {
       return;
+    }
+  }
 
   layerinfo = (msOGRFileInfo *)layer->layerinfo;
   layerinfo->bPaging = value;
@@ -5605,10 +5607,12 @@ static int msOGRGetPaging(layerObj *layer)
   }
 
   if(!msOGRLayerIsOpen(layer))
-    msOGRLayerOpenVT(layer);
-
-  if (!layer->layerinfo)
-      return MS_TRUE;
+  {
+    if(msOGRLayerOpenVT(layer) != MS_SUCCESS)
+    {
+      return FALSE;
+    }
+  }
 
   layerinfo = (msOGRFileInfo *)layer->layerinfo;
   return layerinfo->bPaging;
