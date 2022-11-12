@@ -1344,17 +1344,20 @@ static char *last_filename = NULL;
 static const char *msProjFinder( const char *filename)
 
 {
-  if( last_filename != NULL )
-    free( last_filename );
-
+  
   if( filename == NULL )
     return NULL;
 
   if( ms_proj_lib == NULL )
     return filename;
 
+  msAcquireLock(TLOCK_PROJ);
+  if (last_filename != NULL)
+      free(last_filename);
+
   last_filename = (char *) malloc(strlen(filename)+strlen(ms_proj_lib)+2);
   sprintf( last_filename, "%s/%s", ms_proj_lib, filename );
+  msReleaseLock(TLOCK_PROJ);
 
   return last_filename;
 }
