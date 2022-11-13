@@ -1339,12 +1339,13 @@ static int msTestNeedWrap( pointObj pt1, pointObj pt2, pointObj pt2_geo,
 /************************************************************************/
 #ifdef USE_PROJ
 static char *ms_proj_lib = NULL;
-static char *last_filename = NULL;
+static hashTableObj last_filenames; /* need to return const strings in multithreaded environment */
 
 static const char *msProjFinder( const char *filename)
 
 {
-  
+  const char* last_filename = NULL;
+
   if( filename == NULL )
     return NULL;
 
@@ -1352,11 +1353,19 @@ static const char *msProjFinder( const char *filename)
     return filename;
 
   msAcquireLock(TLOCK_PROJ);
-  if (last_filename != NULL)
-      free(last_filename);
+  if (last_filenames.items == NULL)
+    initHashTable(&last_filenames);
 
-  last_filename = (char *) malloc(strlen(filename)+strlen(ms_proj_lib)+2);
-  sprintf( last_filename, "%s/%s", ms_proj_lib, filename );
+  last_filename = msLookupHashTable(&last_filenames, filename);
+  if (!last_filename) {
+    char* new_filename = (char*)msSmallMalloc(strlen(filename) + strlen(ms_proj_lib) + 2);
+    sprintf(new_filename, "%s/%s", ms_proj_lib, filename);
+    msInsertHashTable(&last_filenames, filename, new_filename);
+    msFree(new_filename);
+    /* get the string recently added */
+    last_filename = msLookupHashTable(&last_filenames, filename);
+  }
+  
   msReleaseLock(TLOCK_PROJ);
 
   return last_filename;
@@ -1419,9 +1428,8 @@ void msSetPROJ_LIB( const char *proj_lib, const char *pszRelToPath )
     ms_proj_lib = NULL;
   }
 
-  if( last_filename != NULL ) {
-    free( last_filename );
-    last_filename = NULL;
+  if( last_filenames.items != NULL ) {
+    msFreeHashItems(&last_filenames);
   }
 
   if( proj_lib != NULL )
