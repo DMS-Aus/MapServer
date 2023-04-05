@@ -27,28 +27,35 @@
  * DEALINGS IN THE SOFTWARE.
  ****************************************************************************/
 
+#define NEED_IGNORE_RET_VAL
+
 #include "maptemplate.h"
 #include "maphash.h"
 #include "mapserver.h"
 #include "maptile.h"
 #include "mapows.h"
 
+#include "cpl_conv.h"
+
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <time.h>
 
+#include <assert.h>
 #include <ctype.h>
 
 
 static inline void IGUR_sizet(size_t ignored) { (void)ignored; }  /* Ignore GCC Unused Result */
 static inline void IGUR_voidp(void* ignored) { (void)ignored; }  /* Ignore GCC Unused Result */
 
-static char *olUrl = "//www.mapserver.org/lib/OpenLayers-ms60.js";
-static char *olTemplate = \
+static const char *const olUrl = "//www.mapserver.org/lib/OpenLayers-ms60.js";
+static const char *const olTemplate = \
                           "<html>\n"
                           "<head>\n"
+                          "<meta content=\"text/html;charset=utf-8\" http-equiv=\"Content-Type\">\n"
                           "  <title>MapServer Simple Viewer</title>\n"
                           "    <script type=\"text/javascript\" src=\"[openlayers_js_url]\"></script>\n"
+                          "    <link rel=\"shortcut icon\" type=\"image/x-icon\" href=\"//www.mapserver.org/_static/mapserver.ico\"/>\n"
                           "    </head>\n"
                           "    <body>\n"
                           "      <div style=\"width:[mapwidth]; height:[mapheight]\" id=\"map\"></div>\n"
@@ -63,13 +70,13 @@ static char *olTemplate = \
                           "</body>\n"
                           "</html>";
 
-static char *olLayerMapServerTag = \
+static const char *const olLayerMapServerTag = \
                                    "var mslayer = new OpenLayers.Layer.MapServer( \"MapServer Layer\",\n"
                                    "                                              \"[mapserv_onlineresource]\",\n"
                                    "                                              {layers: '[layers]'},\n"
                                    "                                              {singleTile: \"true\", ratio:1} )";
 
-static char *olLayerWMSTag = \
+static const char *const olLayerWMSTag = \
                              "var mslayer = new OpenLayers.Layer.WMS('MapServer Simple Viewer\',\n"
                              "                                   '[mapserv_onlineresource]',\n"
                              "                                   {layers: '[LAYERS]',\n"
@@ -77,7 +84,7 @@ static char *olLayerWMSTag = \
                              "                                   width: [mapwidth], height: [mapheight], version: '[VERSION]', format:'[openlayers_format]'},"
                              "                                   {singleTile: \"true\", ratio:1, projection: '[openlayers_projection]'});\n";
 
-static char *processLine(mapservObj *mapserv, char *instr, FILE *stream, int mode);
+static char *processLine(mapservObj *mapserv, const char *instr, FILE *stream, int mode);
 
 static int isValidTemplate(FILE *stream, const char *filename)
 {
@@ -181,11 +188,6 @@ int setExtent(mapservObj *mapserv)
   return MS_SUCCESS;
 }
 
-int checkWebExtent(mapservObj *mapserv)
-{
-  return MS_SUCCESS;
-}
-
 int checkWebScale(mapservObj *mapserv)
 {
   int status;
@@ -259,19 +261,8 @@ int msReturnTemplateQuery(mapservObj *mapserv, char *queryFormat, char **papszBu
     if( MS_RENDERER_PLUGIN(outputFormat) ) {
       msInitializeRendererVTable(outputFormat);
     }
-    
-    /* if( MS_RENDERER_MVT(outputFormat) ) {
-      if( mapserv != NULL )
-	checkWebScale(mapserv);
-
-      status = msMVTWriteFromQuery(map, outputFormat, mapserv->sendheaders);
-
-      return status;
-      } */
-
     if( MS_RENDERER_OGR(outputFormat) ) {
-      if( mapserv != NULL )
-        checkWebScale(mapserv);
+      checkWebScale(mapserv);
 
       status = msOGRWriteFromQuery(map, outputFormat, mapserv->sendheaders);
 
@@ -281,15 +272,14 @@ int msReturnTemplateQuery(mapservObj *mapserv, char *queryFormat, char **papszBu
     if( !MS_RENDERER_TEMPLATE(outputFormat) ) { /* got an image format, return the query results that way */
       outputFormatObj *tempOutputFormat = map->outputformat; /* save format */
 
-      if( mapserv != NULL )
-        checkWebScale(mapserv);
+      checkWebScale(mapserv);
 
       map->outputformat = outputFormat; /* override what was given for IMAGETYPE */
       img = msDrawMap(map, MS_TRUE);
       if(!img) return MS_FAILURE;
       map->outputformat = tempOutputFormat; /* restore format */
 
-      if(mapserv == NULL || mapserv->sendheaders) {
+      if(mapserv->sendheaders) {
         msIO_setHeader("Content-Type", "%s", MS_IMAGE_MIME_TYPE(outputFormat));
         msIO_sendHeaders();
       }
@@ -305,7 +295,7 @@ int msReturnTemplateQuery(mapservObj *mapserv, char *queryFormat, char **papszBu
   ** style made up of external files slammed together. Either way we may have to compute a query map and other
   ** images. We only create support images IF the querymap has status=MS_ON.
   */
-  if(map->querymap.status && mapserv != NULL ) {
+  if(map->querymap.status) {
     checkWebScale(mapserv);
     if(msGenerateImages(mapserv, MS_TRUE, MS_TRUE) != MS_SUCCESS)
       return MS_FAILURE;
@@ -318,7 +308,7 @@ int msReturnTemplateQuery(mapservObj *mapserv, char *queryFormat, char **papszBu
       return MS_FAILURE;
     }
 
-    if(mapserv == NULL || mapserv->sendheaders) {
+    if(mapserv->sendheaders) {
       const char *attachment = msGetOutputFormatOption( outputFormat, "ATTACHMENT", NULL );
       if(attachment)
         msIO_setHeader("Content-disposition","attachment; filename=%s", attachment);
@@ -358,7 +348,6 @@ int isOn(mapservObj *mapserv, char *name, char *group)
 int sortLayerByOrder(mapObj *map, const char* pszOrder)
 {
   int *panCurrentOrder = NULL;
-  int i = 0;
 
   if(!map) {
     msSetError(MS_WEBERR, "Invalid pointer.", "sortLayerByOrder()");
@@ -375,11 +364,11 @@ int sortLayerByOrder(mapObj *map, const char* pszOrder)
   /* -------------------------------------------------------------------- */
   if(map->layerorder) {
     panCurrentOrder = (int*)msSmallMalloc(map->numlayers * sizeof(int));
-    for (i=0; i<map->numlayers ; i++)
+    for (int i=0; i<map->numlayers ; i++)
       panCurrentOrder[i] = map->layerorder[i];
 
     if(strcasecmp(pszOrder, "DESCENDING") == 0) {
-      for (i=0; i<map->numlayers; i++)
+      for (int i=0; i<map->numlayers; i++)
         map->layerorder[i] = panCurrentOrder[map->numlayers-1-i];
     }
 
@@ -699,7 +688,6 @@ int processIfTag(char **pszInstr, hashTableObj *ht, int bLastPass)
   char *pszIfTag;
   char *pszPatIn=NULL, *pszPatOut=NULL, *pszTmp;
   int nInst = 0;
-  int bEmpty = 0;
   int nLength;
 
   hashTableObj *ifArgs=NULL;
@@ -733,7 +721,7 @@ int processIfTag(char **pszInstr, hashTableObj *ht, int bLastPass)
       pszPatIn  = findTag(pszTmp+1, "if");
       pszPatOut = strstr(pszTmp+1, "[/if]");
 
-    } while (pszTmp != NULL && nInst > 0);
+    } while (nInst > 0);
 
     /* get the then string (if expression is true) */
     if(getInlineTag("if", pszStart, &pszThen) != MS_SUCCESS) {
@@ -753,7 +741,7 @@ int processIfTag(char **pszInstr, hashTableObj *ht, int bLastPass)
     if(pszOperator == NULL) /* Default operator if not set is "eq" */
       pszOperator = "eq";
 
-    bEmpty = 0;
+    int bEmpty = 0;
 
     if(pszName) {
       /* build the complete if tag ([if all_args]then string[/if]) */
@@ -804,9 +792,7 @@ int processIfTag(char **pszInstr, hashTableObj *ht, int bLastPass)
         return MS_FAILURE;
       }
 
-      if(pszIfTag)
-        free(pszIfTag);
-
+      free(pszIfTag);
       pszIfTag = NULL;
     }
 
@@ -1010,7 +996,6 @@ static int processResultSetTag(mapservObj *mapserv, char **line, FILE *stream)
   const char *layerName=NULL;
   const char *nodata=NULL;
 
-  int layerIndex=-1;
   layerObj *lp;
 
   if(!*line) {
@@ -1039,7 +1024,7 @@ static int processResultSetTag(mapservObj *mapserv, char **line, FILE *stream)
       return(MS_FAILURE);
     }
 
-    layerIndex = msGetLayerIndex(mapserv->map, layerName);
+    const int layerIndex = msGetLayerIndex(mapserv->map, layerName);
     if(layerIndex>=mapserv->map->numlayers || layerIndex<0) {
       msSetError(MS_MISCERR, "Layer named '%s' does not exist.", "processResultSetTag()", layerName);
       msFreeHashTable(tagArgs);
@@ -1201,7 +1186,7 @@ enum ITEM_ESCAPING {ESCAPE_HTML, ESCAPE_URL, ESCAPE_JSON, ESCAPE_NONE};
 
 static int processItemTag(layerObj *layer, char **line, shapeObj *shape)
 {
-  int i, j;
+  int i;
 
   char *tag, *tagStart, *tagEnd;
   hashTableObj *tagArgs=NULL;
@@ -1213,6 +1198,7 @@ static int processItemTag(layerObj *layer, char **line, shapeObj *shape)
   const char *name=NULL, *pattern=NULL;
   const char *format=NULL, *nullFormat=NULL;
   int precision;
+  int padding;
   int uc, lc, commify;
   int escape;
 
@@ -1228,7 +1214,8 @@ static int processItemTag(layerObj *layer, char **line, shapeObj *shape)
   while (tagStart) {
     format = "$value"; /* initialize the tag arguments */
     nullFormat = "";
-    precision=-1;
+    precision = -1;
+    padding = -1;
     name = pattern = NULL;
     uc = lc = commify = MS_FALSE;
     escape=ESCAPE_HTML;
@@ -1244,6 +1231,9 @@ static int processItemTag(layerObj *layer, char **line, shapeObj *shape)
 
       argValue = msLookupHashTable(tagArgs, "precision");
       if(argValue) precision = atoi(argValue);
+
+      argValue = msLookupHashTable(tagArgs, "padding");
+      if (argValue) padding = atoi(argValue);
 
       argValue = msLookupHashTable(tagArgs, "format");
       if(argValue) format = argValue;
@@ -1307,12 +1297,21 @@ static int processItemTag(layerObj *layer, char **line, shapeObj *shape)
 
       /* apply other effects */
       if(uc == MS_TRUE)
-        for(j=0; j<strlen(itemValue); j++) itemValue[j] = toupper(itemValue[j]);
+        for(unsigned j=0; j<strlen(itemValue); j++) itemValue[j] = toupper(itemValue[j]);
       if(lc == MS_TRUE)
-        for(j=0; j<strlen(itemValue); j++) itemValue[j] = tolower(itemValue[j]);
+        for(unsigned j=0; j<strlen(itemValue); j++) itemValue[j] = tolower(itemValue[j]);
 
       tagValue = msReplaceSubstring(tagValue, "$value", itemValue);
       msFree(itemValue);
+
+      if (padding > 0 && padding < 1000) {
+          int paddedSize = strlen(tagValue) + padding + 1;
+          char *paddedValue = NULL;
+          paddedValue = (char *) msSmallMalloc(paddedSize);
+          snprintf(paddedValue, paddedSize, "%-*s", padding, tagValue);
+          msFree(tagValue);
+          tagValue = paddedValue;
+      }
 
       if(!tagValue) {
         msSetError(MS_WEBERR, "Error applying item format.", "processItemTag()");
@@ -1380,7 +1379,6 @@ static int processExtentTag(mapservObj *mapserv, char **line, char *name, rectOb
   char *encodedTagValue=NULL, *tagValue=NULL;
 
   rectObj tempExtent;
-  int escape;
 
   char number[64]; /* holds a single number in the extent */
   char numberFormat[16];
@@ -1395,15 +1393,14 @@ static int processExtentTag(mapservObj *mapserv, char **line, char *name, rectOb
   /* It is OK to have no include tags, just return. */
   if(!tagStart) return MS_SUCCESS;
 
-  /* hack to handle tags like 'mapext_esc' easily */
-  if(strstr(name, "_esc")) escape = ESCAPE_URL;
-
   while(tagStart) {
     double xExpand = 0, yExpand = 0; /* set tag argument defaults */
     int precision = -1;
     const char* format = "$minx $miny $maxx $maxy";
     const char* projectionString = NULL;
 
+    /* hack to handle tags like 'mapext_esc' easily */
+    int escape;
     if(strstr(name, "_esc"))
       escape = ESCAPE_URL;
     else
@@ -1462,6 +1459,7 @@ static int processExtentTag(mapservObj *mapserv, char **line, char *name, rectOb
     } else if(rectProj && projectionString) {
       projectionObj projection;
       msInitProjection(&projection);
+      msProjectionInheritContextFrom(&projection, &mapserv->map->projection);
 
       if(MS_SUCCESS != msLoadProjectionString(&projection, projectionString)) return MS_FAILURE;
 
@@ -1544,7 +1542,6 @@ static int processShplabelTag(layerObj *layer, char **line, shapeObj *origshape)
   int precision=0;
   int clip_to_map=MS_TRUE;
   int use_label_settings=MS_FALSE;
-  double cellsize=0;
   int labelposvalid = MS_FALSE;
   pointObj labelPos;
   int status;
@@ -1612,6 +1609,7 @@ static int processShplabelTag(layerObj *layer, char **line, shapeObj *origshape)
     tShape.line[0].point = NULL; /* initialize the line */
     tShape.line[0].numpoints = 0;
 
+    double cellsize;
     if(layer->map->cellsize <= 0)
       cellsize = MS_MAX(MS_CELLSIZE(layer->map->extent.minx, layer->map->extent.maxx, layer->map->width, layer->map->pixeladjustment), MS_CELLSIZE(layer->map->extent.miny, layer->map->extent.maxy, layer->map->height, layer->map->pixeladjustment));
     else
@@ -1624,7 +1622,17 @@ static int processShplabelTag(layerObj *layer, char **line, shapeObj *origshape)
         labelPos = shape->line[0].point[0];
         if(layer->transform == MS_TRUE) {
           if(layer->project && msProjectionsDiffer(&(layer->projection), &(layer->map->projection)))
-            msProjectShape(&layer->projection, &layer->map->projection, shape);
+          {
+            if( layer->reprojectorLayerToMap == NULL )
+            {
+                layer->reprojectorLayerToMap = msProjectCreateReprojector(
+                    &layer->projection, &layer->map->projection);
+            }
+            if( layer->reprojectorLayerToMap )
+            {
+                msProjectShapeEx(layer->reprojectorLayerToMap, shape);
+            }
+          }
 
           labelPos = shape->line[0].point[0];
           labelPos.x = MS_MAP2IMAGE_X(labelPos.x, layer->map->extent.minx, cellsize);
@@ -1635,7 +1643,18 @@ static int processShplabelTag(layerObj *layer, char **line, shapeObj *origshape)
       labelposvalid = MS_FALSE;
       if(layer->transform == MS_TRUE) {
         if(layer->project && msProjectionsDiffer(&(layer->projection), &(layer->map->projection)))
-          msProjectShape(&layer->projection, &layer->map->projection, shape);
+        {
+            if( layer->reprojectorLayerToMap == NULL )
+            {
+                layer->reprojectorLayerToMap = msProjectCreateReprojector(
+                    &layer->projection, &layer->map->projection);
+            }
+            if( layer->reprojectorLayerToMap )
+            {
+                msProjectShapeEx(layer->reprojectorLayerToMap, shape);
+            }
+        }
+
         if(clip_to_map)
           msClipPolylineRect(shape, layer->map->extent);
 
@@ -1646,7 +1665,7 @@ static int processShplabelTag(layerObj *layer, char **line, shapeObj *origshape)
       if(shape->numlines > 0) {
         struct label_auto_result lar;
         memset(&lar,0,sizeof(struct label_auto_result));
-        if(UNLIKELY(MS_FAILURE == msPolylineLabelPoint(layer->map, shape, NULL, NULL, &lar, 0))) {
+        if(MS_UNLIKELY(MS_FAILURE == msPolylineLabelPoint(layer->map, shape, NULL, NULL, &lar, 0))) {
           free(lar.angles);
           free(lar.label_points);
           return MS_FAILURE;
@@ -1664,7 +1683,17 @@ static int processShplabelTag(layerObj *layer, char **line, shapeObj *origshape)
       labelposvalid = MS_FALSE;
       if(layer->transform == MS_TRUE) {
         if(layer->project && msProjectionsDiffer(&(layer->projection), &(layer->map->projection)))
-          msProjectShape(&layer->projection, &layer->map->projection, shape);
+        {
+            if( layer->reprojectorLayerToMap == NULL )
+            {
+                layer->reprojectorLayerToMap = msProjectCreateReprojector(
+                    &layer->projection, &layer->map->projection);
+            }
+            if( layer->reprojectorLayerToMap )
+            {
+                msProjectShapeEx(layer->reprojectorLayerToMap, shape);
+            }
+        }
 
         if(clip_to_map)
           msClipPolygonRect(shape, layer->map->extent);
@@ -1684,8 +1713,8 @@ static int processShplabelTag(layerObj *layer, char **line, shapeObj *origshape)
     }
 
     if(labelposvalid == MS_TRUE) {
-      pointObj p1;
-      pointObj p2;
+      pointObj p1 = {0}; // initialize
+      pointObj p2 = {0};
       int label_offset_x, label_offset_y;
       labelObj *label=NULL;
       label_bounds lbounds;
@@ -1752,7 +1781,17 @@ static int processShplabelTag(layerObj *layer, char **line, shapeObj *origshape)
 
       /* if necessary, project the shape to match the map */
       if(msProjectionsDiffer(&(layer->projection), &(layer->map->projection)))
-        msProjectShape(&layer->projection, &layer->map->projection, &tShape);
+      {
+        if( layer->reprojectorLayerToMap == NULL )
+        {
+            layer->reprojectorLayerToMap = msProjectCreateReprojector(
+                &layer->projection, &layer->map->projection);
+        }
+        if( layer->reprojectorLayerToMap )
+        {
+            msProjectShapeEx(layer->reprojectorLayerToMap, &tShape);
+        }
+      }
 
       msClipPolylineRect(&tShape, layer->map->extent);
 
@@ -1760,6 +1799,7 @@ static int processShplabelTag(layerObj *layer, char **line, shapeObj *origshape)
     } else if(projectionString) {
       projectionObj projection;
       msInitProjection(&projection);
+      msProjectionInheritContextFrom(&projection, &layer->map->projection);
 
       status = msLoadProjectionString(&projection, projectionString);
       if(status != MS_SUCCESS) return MS_FAILURE;
@@ -1767,15 +1807,6 @@ static int processShplabelTag(layerObj *layer, char **line, shapeObj *origshape)
       if(msProjectionsDiffer(&(layer->projection), &projection))
         msProjectShape(&layer->projection, &projection, &tShape);
     }
-
-    /* find the end of the tag */
-    tagEnd = findTagEnd(tagStart);
-    tagEnd++;
-
-    /* build the complete tag so we can do substitution */
-    tagLength = tagEnd - tagStart;
-    tag = (char *) msSmallMalloc(tagLength + 1);
-    strlcpy(tag, tagStart, tagLength+1);
 
     /* do the replacement */
     tagValue = msStrdup(format);
@@ -2127,7 +2158,17 @@ static int processShpxyTag(layerObj *layer, char **line, shapeObj *shape)
 
       /* if necessary, project the shape to match the map */
       if(msProjectionsDiffer(&(layer->projection), &(layer->map->projection)))
-        msProjectShape(&layer->projection, &layer->map->projection, &tShape);
+      {
+        if( layer->reprojectorLayerToMap == NULL )
+        {
+            layer->reprojectorLayerToMap = msProjectCreateReprojector(
+                &layer->projection, &layer->map->projection);
+        }
+        if( layer->reprojectorLayerToMap )
+        {
+            msProjectShapeEx(layer->reprojectorLayerToMap, &tShape);
+        }
+      }
 
       switch(tShape.type) {
         case(MS_SHAPE_POINT):
@@ -2165,6 +2206,7 @@ static int processShpxyTag(layerObj *layer, char **line, shapeObj *shape)
     } else if(projectionString) {
       projectionObj projection;
       msInitProjection(&projection);
+      msProjectionInheritContextFrom(&projection, &(layer->projection));
 
       status = msLoadProjectionString(&projection, projectionString);
       if(status != MS_SUCCESS) return MS_FAILURE;
@@ -2406,8 +2448,8 @@ int processIcon(mapObj *map, int nIdxLayer, int nIdxClass, char** pszInstr, char
         pszSymbolNameHash = msHashString(style->symbolname);
 
       snprintf(szStyleCode+strlen(szStyleCode), 255,
-               "s%d_%x_%x_%x_%d_%s_%g",
-               i, MS_COLOR_GETRGB(style->color), MS_COLOR_GETRGB(style->backgroundcolor), MS_COLOR_GETRGB(style->outlinecolor),
+               "s%d_%x_%x_%d_%s_%g",
+               i, MS_COLOR_GETRGB(style->color),MS_COLOR_GETRGB(style->outlinecolor),
                style->symbol, pszSymbolNameHash?pszSymbolNameHash:"",
                style->angle);
       msFree(pszSymbolNameHash);
@@ -2985,7 +3027,7 @@ char *generateLegendTemplate(mapservObj *mapserv)
   /*      Save the current drawing order. The drawing order is reset      */
   /*      at the end of the function.                                     */
   /* -------------------------------------------------------------------- */
-  if(mapserv && mapserv->map && mapserv->map->numlayers > 0) {
+  if(mapserv->map->numlayers > 0) {
     panCurrentDrawingOrder =
       (int *)msSmallMalloc(sizeof(int)*mapserv->map->numlayers);
 
@@ -3005,8 +3047,9 @@ char *generateLegendTemplate(mapservObj *mapserv)
     if(strcasecmp(mapserv->request->ParamNames[i], "map") == 0) break;
 
   if(i == mapserv->request->NumParams) {
-    if( getenv("MS_MAPFILE"))
-      pszMapFname = msStringConcatenate(pszMapFname, getenv("MS_MAPFILE"));
+    const char *ms_mapfile = CPLGetConfigOption("MS_MAPFILE", NULL);
+    if(ms_mapfile)
+      pszMapFname = msStringConcatenate(pszMapFname, ms_mapfile);
   } else {
     if(getenv(mapserv->request->ParamValues[i])) /* an environment references the actual file to use */
       pszMapFname = msStringConcatenate(pszMapFname, getenv(mapserv->request->ParamValues[i]));
@@ -3043,17 +3086,31 @@ char *generateLegendTemplate(mapservObj *mapserv)
   /* open template */
   if((stream = fopen(msBuildPath(szPath, mapserv->map->mappath, mapserv->map->legend.template), "r")) == NULL) {
     msSetError(MS_IOERR, "Error while opening template file.", "generateLegendTemplate()");
-    if(pszResult)
-      free(pszResult);
+    free(pszResult);
     pszResult=NULL;
     goto error;
   }
 
   fseek(stream, 0, SEEK_END);
-  length = ftell(stream);
+  long lengthLong = ftell(stream);
   rewind(stream);
+  if( lengthLong < 0 || lengthLong > INT_MAX - 1 )
+  {
+    msSetError(MS_IOERR, "Too large template file.", "generateLegendTemplate()");
+    free(pszResult);
+    pszResult=NULL;
+    goto error;
+  }
+  length = (int)lengthLong;
 
-  file = (char*)msSmallMalloc(length + 1);
+  file = (char*)malloc(length + 1);
+  if( file == NULL )
+  {
+    msSetError(MS_IOERR, "Cannot allocate memory for template file.", "generateLegendTemplate()");
+    free(pszResult);
+    pszResult=NULL;
+    goto error;
+  }
 
   /*
    * Read all the template file
@@ -3284,7 +3341,7 @@ char *generateLegendTemplate(mapservObj *mapserv)
 
           if(GET_LAYER(mapserv->map, mapserv->map->layerorder[j])->group && strcmp(GET_LAYER(mapserv->map, mapserv->map->layerorder[j])->group, papszGroups[i]) == 0) {
             /* for all classes in layer */
-            if(legClassHtml) {
+
               for (k=0; k<GET_LAYER(mapserv->map, mapserv->map->layerorder[j])->numclasses; k++) {
                 /* process all class tags */
                 if(!GET_LAYER(mapserv->map, mapserv->map->layerorder[j])->class[k]->name)
@@ -3309,7 +3366,7 @@ char *generateLegendTemplate(mapservObj *mapserv)
                   legClassHtmlCopy = NULL;
                 }
               }
-            }
+
           }
         }
       }
@@ -3500,6 +3557,7 @@ char *processOneToManyJoin(mapservObj* mapserv, joinObj *join)
     /* want to do this if there are joined records. */
     if(records == MS_FALSE) {
       if(join->header != NULL) {
+        /* coverity[dead_error_line] */
         if(stream) fclose(stream);
         if((stream = fopen(msBuildPath(szPath, mapserv->map->mappath, join->header), "r")) == NULL) {
           msSetError(MS_IOERR, "Error while opening join header file %s.", "processOneToManyJoin()", join->header);
@@ -3571,11 +3629,14 @@ char *processOneToManyJoin(mapservObj* mapserv, joinObj *join)
     while(fgets(line, MS_BUFFER_LENGTH, stream) != NULL) outbuf = msStringConcatenate(outbuf, line);
 
     fclose(stream);
+    stream = NULL;
   }
 
   /* clear any data associated with the join */
   msFreeCharArray(join->values, join->numitems);
   join->values = NULL;
+
+  if(stream) fclose(stream);
 
   return(outbuf);
 }
@@ -3584,7 +3645,7 @@ char *processOneToManyJoin(mapservObj* mapserv, joinObj *join)
 ** Process a single line in the template. A few tags (e.g. [resultset]...[/resultset]) can be multi-line so
 ** we pass the filehandle to look ahead if necessary.
 */
-static char *processLine(mapservObj *mapserv, char *instr, FILE *stream, int mode)
+static char *processLine(mapservObj *mapserv, const char *instr, FILE *stream, int mode)
 {
   int i, j;
 #define PROCESSLINE_BUFLEN 5120
@@ -3592,10 +3653,8 @@ static char *processLine(mapservObj *mapserv, char *instr, FILE *stream, int mod
   struct hashObj *tp=NULL;
   char *encodedstr;
 
-#ifdef USE_PROJ
   rectObj llextent;
   pointObj llpoint;
-#endif
 
   outstr = msStrdup(instr); /* work from a copy */
 
@@ -3844,10 +3903,9 @@ static char *processLine(mapservObj *mapserv, char *instr, FILE *stream, int mod
   if(processExtentTag(mapserv, &outstr, "rawext_esc", &(mapserv->RawExt), &(mapserv->map->projection)) != MS_SUCCESS) /* depricated */
     return(NULL);
 
-#ifdef USE_PROJ
   if((strstr(outstr, "lat]") || strstr(outstr, "lon]") || strstr(outstr, "lon_esc]"))
       && mapserv->map->projection.proj != NULL
-      && !pj_is_latlong(mapserv->map->projection.proj) ) {
+      && !msProjIsGeographicCRS(&(mapserv->map->projection)) ) {
     llextent=mapserv->map->extent;
     llpoint=mapserv->mappnt;
     msProjectRect(&(mapserv->map->projection), &(mapserv->map->latlon), &llextent);
@@ -3872,7 +3930,6 @@ static char *processLine(mapservObj *mapserv, char *instr, FILE *stream, int mod
     if(processExtentTag(mapserv, &outstr, "mapext_latlon_esc", &(llextent), NULL) != MS_SUCCESS) /* depricated */
       return(NULL);
   }
-#endif
 
   /* submitted by J.F (bug 1102) */
   if(mapserv->map->reference.status == MS_ON) {
@@ -3964,6 +4021,8 @@ static char *processLine(mapservObj *mapserv, char *instr, FILE *stream, int mod
       return(NULL);
     }
   } else { /* return shape and/or values */
+
+    assert(mapserv->resultlayer);
 
     snprintf(repstr, sizeof(repstr), "%f %f", (mapserv->resultshape.bounds.maxx + mapserv->resultshape.bounds.minx)/2, (mapserv->resultshape.bounds.maxy + mapserv->resultshape.bounds.miny)/2);
     outstr = msReplaceSubstring(outstr, "[shpmid]", repstr);
@@ -4108,7 +4167,6 @@ int msReturnPage(mapservObj *mapserv, char *html, int mode, char **papszBuffer)
   char line[MS_BUFFER_LENGTH], *tmpline;
   int   nBufferSize = 0;
   int   nCurrentSize = 0;
-  int   nExpandBuffer = 0;
 
   ms_regex_t re; /* compiled regular expression to be matched */
   char szPath[MS_MAXPATHLEN];
@@ -4146,11 +4204,9 @@ int msReturnPage(mapservObj *mapserv, char *html, int mode, char **papszBuffer)
       (*papszBuffer)[0] = '\0';
       nBufferSize = MS_TEMPLATE_BUFFER;
       nCurrentSize = 0;
-      nExpandBuffer = 1;
     } else {
       nCurrentSize = strlen((*papszBuffer));
       nBufferSize = nCurrentSize;
-      nExpandBuffer = (nCurrentSize/MS_TEMPLATE_BUFFER) + 1;
     }
   }
 
@@ -4158,12 +4214,14 @@ int msReturnPage(mapservObj *mapserv, char *html, int mode, char **papszBuffer)
 
     if(strchr(line, '[') != NULL) {
       tmpline = processLine(mapserv, line, stream, mode);
-      if(!tmpline)
+      if(!tmpline) {
+        fclose(stream);
         return MS_FAILURE;
+      }
 
       if(papszBuffer) {
         if(nBufferSize <= (int)(nCurrentSize + strlen(tmpline) + 1)) {
-          nExpandBuffer = (strlen(tmpline) /  MS_TEMPLATE_BUFFER) + 1;
+          const int nExpandBuffer = (strlen(tmpline) /  MS_TEMPLATE_BUFFER) + 1;
           nBufferSize = MS_TEMPLATE_BUFFER*nExpandBuffer + strlen((*papszBuffer));
           (*papszBuffer) = (char *) msSmallRealloc((*papszBuffer),sizeof(char)*nBufferSize);
         }
@@ -4176,7 +4234,7 @@ int msReturnPage(mapservObj *mapserv, char *html, int mode, char **papszBuffer)
     } else {
       if(papszBuffer) {
         if(nBufferSize <= (int)(nCurrentSize + strlen(line))) {
-          nExpandBuffer = (strlen(line) /  MS_TEMPLATE_BUFFER) + 1;
+          const int nExpandBuffer = (strlen(line) /  MS_TEMPLATE_BUFFER) + 1;
           nBufferSize = MS_TEMPLATE_BUFFER*nExpandBuffer + strlen((*papszBuffer));
           (*papszBuffer) = (char *)msSmallRealloc((*papszBuffer),sizeof(char)*nBufferSize);
         }
@@ -4413,7 +4471,7 @@ int msReturnOpenLayersPage(mapservObj *mapserv)
   int i;
   char *buffer = NULL, *layer = NULL;
   const char *tmpUrl = NULL;
-  char *openlayersUrl = olUrl;
+  const char *openlayersUrl = olUrl;
   char *projection = NULL;
   char *format = NULL;
 
@@ -4439,10 +4497,10 @@ int msReturnOpenLayersPage(mapservObj *mapserv)
 
   /* check if the environment variable or config MS_OPENLAYERS_JS_URL is set */
   tmpUrl = msGetConfigOption(mapserv->map, "MS_OPENLAYERS_JS_URL");
-  if (tmpUrl)
-    openlayersUrl = (char*)tmpUrl;
-  else if (getenv("MS_OPENLAYERS_JS_URL"))
-    openlayersUrl = getenv("MS_OPENLAYERS_JS_URL");
+  if(tmpUrl == NULL) tmpUrl = CPLGetConfigOption("MS_OPENLAYERS_JS_URL", NULL);
+  
+  if(tmpUrl)
+    openlayersUrl = (char *)tmpUrl;
 
   if (mapserv->Mode == BROWSE) {
     msSetError(MS_WMSERR, "At least one layer name required in LAYERS.",
@@ -4550,6 +4608,10 @@ mapservObj *msAllocMapServObj()
   mapserv->QueryString=NULL;
   mapserv->ShapeIndex=-1;
   mapserv->TileIndex=-1;
+  mapserv->TileMode=TILE_GMAP;
+  mapserv->TileCoords=NULL;
+  mapserv->TileWidth=-1;
+  mapserv->TileHeight=-1;
   mapserv->QueryCoordSource=NONE;
   mapserv->ZoomSize=0; /* zoom absolute magnitude (i.e. > 0) */
 
@@ -4588,6 +4650,8 @@ void msFreeMapServObj(mapservObj* mapserv)
     msFree(mapserv->QueryLayer);
     msFree(mapserv->SelectLayer);
     msFree(mapserv->QueryFile);
+
+    msFree(mapserv->TileCoords);
 
     msFree(mapserv);
   }
@@ -4834,7 +4898,7 @@ char *msProcessQueryTemplate(mapObj *map, int bGenerateImages, char **names, cha
       msGenerateImages(mapserv, MS_TRUE, MS_FALSE);
 
     mapserv->sendheaders = MS_FALSE;
-    msReturnTemplateQuery(mapserv, mapserv->map->web.queryformat, &pszBuffer);
+    IGNORE_RET_VAL(msReturnTemplateQuery(mapserv, mapserv->map->web.queryformat, &pszBuffer));
 
     mapserv->map = NULL;
     mapserv->request->ParamNames = mapserv->request->ParamValues = NULL;

@@ -90,17 +90,16 @@ class NewStylesTestCase(MapTestCase):
         assert class0.numstyles == 2, class0.numstyles
         new_style = mapscript.styleObj()
         new_style.color.setRGB(0, 0, 0)
-        new_style.symbol = 1
+        new_style.setSymbolByName(self.map, 'circle')
         new_style.size = 3
         index = class0.insertStyle(new_style)
         assert index == 2, index
         assert class0.numstyles == 3, class0.numstyles
         msimg = self.map.draw()
         assert msimg.thisown == 1
-        data = msimg.saveToString()
         filename = 'testAppendNewStyle.png'
         fh = open(filename, 'wb')
-        fh.write(data)
+        msimg.write(fh)
         fh.close()
 
     def testAppendNewStyleOldWay(self):
@@ -114,10 +113,9 @@ class NewStylesTestCase(MapTestCase):
         new_style.symbol = 1
         new_style.size = 3
         msimg = self.map.draw()
-        data = msimg.saveToString()
         filename = 'testAppendNewStyleOldWay.png'
         fh = open(filename, 'wb')
-        fh.write(data)
+        msimg.write(fh)
         fh.close()
 
     def testInsertNewStyleAtIndex0(self):
@@ -133,10 +131,9 @@ class NewStylesTestCase(MapTestCase):
         assert class0.numstyles == 2, class0.numstyles
         msimg = self.map.draw()
         assert msimg.thisown == 1
-        data = msimg.saveToString()
         filename = 'testInsertNewStyleAtIndex0.png'
         fh = open(filename, 'wb')
-        fh.write(data)
+        msimg.write(fh)
         fh.close()
 
     def testRemovePointStyle(self):
@@ -174,6 +171,81 @@ class NewStylesTestCase(MapTestCase):
         class0 = p_layer.getClass(0)
         self.assertRaises(mapscript.MapServerChildError,
                           class0.insertStyle, None)
+
+    def testConvertToString(self):
+        """ensure styles can be created and output to strings
+        in a round trip"""
+        input_string = """
+            STYLE
+                SIZE 7.25
+                COLOR 255 0 0
+                OFFSET 10.5 20.75
+            END
+        """
+
+        new_style = mapscript.fromstring(input_string)
+        assert new_style.size == 7.25
+        assert new_style.color.red == 255
+        assert new_style.color.green == 0
+        assert new_style.color.blue == 0
+
+        assert new_style.offsetx == 10.5
+        assert new_style.offsety == 20.75
+
+        output_string = new_style.convertToString()
+        new_style2 = mapscript.fromstring(output_string)
+
+        # ensure attributes are output as doubles
+        assert new_style.size == 7.25
+        assert new_style2.offsetx == 10.5
+        assert new_style2.offsety == 20.75
+
+    def testPattern(self):
+        """See https://github.com/mapserver/mapserver/issues/4943"""
+
+        si = mapscript.styleObj()
+        assert si.pattern == ()
+        assert si.patternlength == 0
+
+    def testPattern2(self):
+
+        si = mapscript.styleObj()
+        si.pattern = [2.0, 3, 4]
+        assert si.pattern == (2.0, 3.0, 4.0)
+        assert si.patternlength == 3
+
+    def testPattern3(self):
+        """a pattern must have at least 2 elements"""
+
+        si = mapscript.styleObj()
+        exception = None
+        try:
+            si.pattern = [1.0]
+        except Exception:
+            exception = True
+        assert exception is True
+
+    def testPattern4(self):
+        """a pattern can have a max of 10 elements
+        This is set in mapsymbol.h with #define MS_MAXPATTERNLENGTH 10"""
+
+        si = mapscript.styleObj()
+        exception = None
+        try:
+            si.pattern = [i for i in range(11)]
+        except Exception:
+            exception = True
+        assert exception is True
+
+    def testPattern5(self):
+        """pattern length is read-only"""
+        si = mapscript.styleObj()
+        exception = None
+        try:
+            si.patternlength = 0
+        except Exception:
+            exception = True
+        assert exception is True
 
 
 class BrushCachingTestCase(MapTestCase):

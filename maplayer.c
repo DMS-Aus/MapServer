@@ -32,10 +32,14 @@
 #include "mapogcfilter.h"
 #include "mapthread.h"
 #include "mapfile.h"
-
+#include "mapows.h"
 #include "mapparser.h"
 
 #include <assert.h>
+
+#ifndef cppcheck_assert
+#define cppcheck_assert(x) do {} while(0)
+#endif
 
 static int populateVirtualTable(layerVTableObj *vtable);
 
@@ -54,6 +58,7 @@ int msLayerInitItemInfo(layerObj *layer)
     if (rv != MS_SUCCESS)
       return rv;
   }
+  cppcheck_assert(layer->vtable);
   return layer->vtable->LayerInitItemInfo(layer);
 }
 
@@ -61,9 +66,10 @@ void msLayerFreeItemInfo(layerObj *layer)
 {
   if ( ! layer->vtable) {
     int rv =  msInitializeVirtualTable(layer);
-    if (rv != MS_SUCCESS)
+    if( rv != MS_SUCCESS )
       return;
   }
+  cppcheck_assert(layer->vtable);
   layer->vtable->LayerFreeItemInfo(layer);
 
   /*
@@ -238,6 +244,7 @@ int msLayerOpen(layerObj *layer)
     if (rv != MS_SUCCESS)
       return rv;
   }
+  cppcheck_assert(layer->vtable);
   return layer->vtable->LayerOpen(layer);
 }
 
@@ -251,6 +258,7 @@ int msLayerIsOpen(layerObj *layer)
     if (rv != MS_SUCCESS)
       return rv;
   }
+  cppcheck_assert(layer->vtable);
   return layer->vtable->LayerIsOpen(layer);
 }
 
@@ -264,6 +272,7 @@ int msLayerSupportsCommonFilters(layerObj *layer)
     if (rv != MS_SUCCESS)
       return rv;
   }
+  cppcheck_assert(layer->vtable);
   return layer->vtable->LayerSupportsCommonFilters(layer);
 }
 
@@ -274,6 +283,7 @@ int msLayerTranslateFilter(layerObj *layer, expressionObj *filter, char *filteri
     if (rv != MS_SUCCESS)
       return rv;
   }
+  cppcheck_assert(layer->vtable);
   return layer->vtable->LayerTranslateFilter(layer, filter, filteritem);
 }
 
@@ -297,6 +307,7 @@ int msLayerWhichShapes(layerObj *layer, rectObj rect, int isQuery)
     if (rv != MS_SUCCESS)
       return rv;
   }
+  cppcheck_assert(layer->vtable);
   return layer->vtable->LayerWhichShapes(layer, rect, isQuery);
 }
 
@@ -315,6 +326,7 @@ int msLayerNextShape(layerObj *layer, shapeObj *shape)
     if (rv != MS_SUCCESS)
       return rv;
   }
+  cppcheck_assert(layer->vtable);
 
 #ifdef USE_V8_MAPSCRIPT
   /* we need to force the GetItems for the geomtransform attributes */
@@ -337,18 +349,14 @@ int msLayerNextShape(layerObj *layer, shapeObj *shape)
     rv = layer->vtable->LayerNextShape(layer, shape);
     if(rv != MS_SUCCESS) return rv;
 
-    filter_passed = MS_TRUE;  /* By default accept ANY shape */
-    
     /* attributes need to be iconv'd to UTF-8 before any filter logic is applied */
     if(layer->encoding) {
       rv = msLayerEncodeShapeAttributes(layer,shape);
       if(rv != MS_SUCCESS)
         return rv;
     }
-    
-    // if(layer->numitems > 0 && layer->iteminfo) {
-      filter_passed = msEvalExpression(layer, shape, &(layer->filter), layer->filteritemindex);
-    // }
+
+    filter_passed = msEvalExpression(layer, shape, &(layer->filter), layer->filteritemindex);
 
     if(!filter_passed) msFreeShape(shape);
   } while(!filter_passed);
@@ -392,6 +400,7 @@ int msLayerGetShape(layerObj *layer, shapeObj *shape, resultObj *record)
     if(rv != MS_SUCCESS)
       return rv;
   }
+  cppcheck_assert(layer->vtable);
 
   /*
   ** TODO: This is where dynamic joins could happen. Joined attributes would be
@@ -401,9 +410,9 @@ int msLayerGetShape(layerObj *layer, shapeObj *shape, resultObj *record)
   rv = layer->vtable->LayerGetShape(layer, shape, record);
   if(rv != MS_SUCCESS)
     return rv;
-  
+
   /* RFC89 Apply Layer GeomTransform */
-  if(layer->_geomtransform.type != MS_GEOMTRANSFORM_NONE && rv == MS_SUCCESS) {
+  if(layer->_geomtransform.type != MS_GEOMTRANSFORM_NONE) {
     rv = msGeomTransformShape(layer->map, layer, shape); 
     if(rv != MS_SUCCESS)
       return rv;
@@ -437,6 +446,7 @@ int msLayerGetShapeCount(layerObj *layer, rectObj rect, projectionObj *rectProje
     if(rv != MS_SUCCESS)
       return -1;
   }
+  cppcheck_assert(layer->vtable);
 
   return layer->vtable->LayerGetShapeCount(layer, rect, rectProjection);
 }
@@ -507,6 +517,7 @@ int msLayerGetItems(layerObj *layer)
     if (rv != MS_SUCCESS)
       return rv;
   }
+  cppcheck_assert(layer->vtable);
 
   /* At the end of switch case (default -> break; -> return MS_FAILURE),
    * was following TODO ITEM:
@@ -555,7 +566,12 @@ int msLayerGetExtent(layerObj *layer, rectObj *extent)
       return rv;
     }
   }
+  cppcheck_assert(layer->vtable);
   status = layer->vtable->LayerGetExtent(layer, extent);
+
+  if (status == MS_SUCCESS) {
+      layer->extent = *extent;
+  }
 
   if (need_to_close)
     msLayerClose(layer);
@@ -776,6 +792,95 @@ parse_error:
   return MS_FAILURE;
 }
 
+
+static void buildLayerItemList(layerObj *layer)
+{
+  int i, j, k, l;
+  /*
+  ** build layer item list, compute item indexes for explicity item references (e.g. classitem) or item bindings
+  */
+
+  /* layer items */
+  if(layer->classitem) layer->classitemindex = string2list(layer->items, &(layer->numitems), layer->classitem);
+  if(layer->filteritem) layer->filteritemindex = string2list(layer->items, &(layer->numitems), layer->filteritem);
+  if(layer->styleitem && (strcasecmp(layer->styleitem, "AUTO") != 0) && (strncasecmp(layer->styleitem, "javascript://",13) != 0)) 
+    layer->styleitemindex = string2list(layer->items, &(layer->numitems), layer->styleitem);
+  if(layer->labelitem) layer->labelitemindex = string2list(layer->items, &(layer->numitems), layer->labelitem);
+  if(layer->utfitem) layer->utfitemindex = string2list(layer->items, &(layer->numitems), layer->utfitem);
+
+  /* layer classes */
+  for(i=0; i<layer->numclasses; i++) {
+    
+    if(layer->class[i]->expression.type == MS_EXPRESSION) /* class expression */
+      msTokenizeExpression(&(layer->class[i]->expression), layer->items, &(layer->numitems));
+
+    /* class styles (items, bindings, geomtransform) */
+    for(j=0; j<layer->class[i]->numstyles; j++) {
+      if(layer->class[i]->styles[j]->rangeitem) 
+        layer->class[i]->styles[j]->rangeitemindex = string2list(layer->items, &(layer->numitems), layer->class[i]->styles[j]->rangeitem);
+      for(k=0; k<MS_STYLE_BINDING_LENGTH; k++) {
+        if(layer->class[i]->styles[j]->bindings[k].item) 
+          layer->class[i]->styles[j]->bindings[k].index = string2list(layer->items, &(layer->numitems), layer->class[i]->styles[j]->bindings[k].item);
+        if (layer->class[i]->styles[j]->exprBindings[k].type == MS_EXPRESSION)
+        {
+          msTokenizeExpression(
+              &(layer->class[i]->styles[j]->exprBindings[k]),
+              layer->items, &(layer->numitems));
+        }
+      }
+      if(layer->class[i]->styles[j]->_geomtransform.type == MS_GEOMTRANSFORM_EXPRESSION)
+        msTokenizeExpression(&(layer->class[i]->styles[j]->_geomtransform), layer->items, &(layer->numitems));
+    }
+
+    /* class labels and label styles (items, bindings, geomtransform) */
+    for(l=0; l<layer->class[i]->numlabels; l++) {
+      for(j=0; j<layer->class[i]->labels[l]->numstyles; j++) {
+        if(layer->class[i]->labels[l]->styles[j]->rangeitem) 
+          layer->class[i]->labels[l]->styles[j]->rangeitemindex = string2list(layer->items, &(layer->numitems), layer->class[i]->labels[l]->styles[j]->rangeitem);
+        for(k=0; k<MS_STYLE_BINDING_LENGTH; k++) {
+          if(layer->class[i]->labels[l]->styles[j]->bindings[k].item) 
+            layer->class[i]->labels[l]->styles[j]->bindings[k].index = string2list(layer->items, &(layer->numitems), layer->class[i]->labels[l]->styles[j]->bindings[k].item);
+          if(layer->class[i]->labels[l]->styles[j]->_geomtransform.type == MS_GEOMTRANSFORM_EXPRESSION)
+            msTokenizeExpression(&(layer->class[i]->labels[l]->styles[j]->_geomtransform), layer->items, &(layer->numitems));
+        }
+      }
+      for(k=0; k<MS_LABEL_BINDING_LENGTH; k++) {
+        if(layer->class[i]->labels[l]->bindings[k].item) 
+          layer->class[i]->labels[l]->bindings[k].index = string2list(layer->items, &(layer->numitems), layer->class[i]->labels[l]->bindings[k].item);
+        if (layer->class[i]->labels[l]->exprBindings[k].type == MS_EXPRESSION)
+        {
+          msTokenizeExpression(
+              &(layer->class[i]->labels[l]->exprBindings[k]),
+              layer->items, &(layer->numitems));
+        }
+      }
+
+       /* label expression */
+      if(layer->class[i]->labels[l]->expression.type == MS_EXPRESSION) msTokenizeExpression(&(layer->class[i]->labels[l]->expression), layer->items, &(layer->numitems));
+
+      /* label text */
+      if(layer->class[i]->labels[l]->text.type == MS_EXPRESSION || (layer->class[i]->labels[l]->text.string && strchr(layer->class[i]->labels[l]->text.string,'[') != NULL && strchr(layer->class[i]->labels[l]->text.string,']') != NULL))
+        msTokenizeExpression(&(layer->class[i]->labels[l]->text), layer->items, &(layer->numitems));
+    }
+
+    /* class text */
+    if(layer->class[i]->text.type == MS_EXPRESSION || (layer->class[i]->text.string && strchr(layer->class[i]->text.string,'[') != NULL && strchr(layer->class[i]->text.string,']') != NULL))
+      msTokenizeExpression(&(layer->class[i]->text), layer->items, &(layer->numitems));
+  }
+
+  /* layer filter */
+  if(layer->filter.type == MS_EXPRESSION) msTokenizeExpression(&(layer->filter), layer->items, &(layer->numitems));
+
+  /* cluster expressions */
+  if(layer->cluster.group.type == MS_EXPRESSION) msTokenizeExpression(&(layer->cluster.group), layer->items, &(layer->numitems));
+  if(layer->cluster.filter.type == MS_EXPRESSION) msTokenizeExpression(&(layer->cluster.filter), layer->items, &(layer->numitems));
+
+  /* utfdata */
+  if(layer->utfdata.type == MS_EXPRESSION || (layer->utfdata.string && strchr(layer->utfdata.string,'[') != NULL && strchr(layer->utfdata.string,']') != NULL)) {
+    msTokenizeExpression(&(layer->utfdata), layer->items, &(layer->numitems));
+  }
+}
+
 /*
 ** This function builds a list of items necessary to draw or query a particular layer by
 ** examining the contents of the various xxxxitem parameters and expressions. That list is
@@ -790,6 +895,7 @@ int msLayerWhichItems(layerObj *layer, int get_all, const char *metadata)
     rv =  msInitializeVirtualTable(layer);
     if (rv != MS_SUCCESS) return rv;
   }
+  cppcheck_assert(layer->vtable);
 
   /* Cleanup any previous item selection */
   msLayerFreeItemInfo(layer);
@@ -830,7 +936,7 @@ int msLayerWhichItems(layerObj *layer, int get_all, const char *metadata)
 
   if(layer->_geomtransform.type == MS_GEOMTRANSFORM_EXPRESSION)
     msTokenizeExpression(&layer->_geomtransform, layer->items, &(layer->numitems));
-  
+
   /* class level counts */
   for(i=0; i<layer->numclasses; i++) {
 
@@ -839,6 +945,12 @@ int msLayerWhichItems(layerObj *layer, int get_all, const char *metadata)
       nt += layer->class[i]->styles[j]->numbindings;
       if(layer->class[i]->styles[j]->_geomtransform.type == MS_GEOMTRANSFORM_EXPRESSION)
         nt += msCountChars(layer->class[i]->styles[j]->_geomtransform.string, '[');
+      for(k=0; k<MS_STYLE_BINDING_LENGTH; k++) {
+        if (layer->class[i]->styles[j]->exprBindings[k].type == MS_EXPRESSION)
+        {
+          nt += msCountChars(layer->class[i]->styles[j]->exprBindings[k].string, '[');
+        }
+      }
     }
 
     if(layer->class[i]->expression.type == MS_EXPRESSION)
@@ -851,6 +963,12 @@ int msLayerWhichItems(layerObj *layer, int get_all, const char *metadata)
         nt += layer->class[i]->labels[l]->styles[j]->numbindings;
         if(layer->class[i]->labels[l]->styles[j]->_geomtransform.type == MS_GEOMTRANSFORM_EXPRESSION)
           nt += msCountChars(layer->class[i]->labels[l]->styles[j]->_geomtransform.string, '[');
+      }
+      for(k=0; k<MS_LABEL_BINDING_LENGTH; k++) {
+        if (layer->class[i]->labels[l]->exprBindings[k].type == MS_EXPRESSION)
+        {
+          nt += msCountChars(layer->class[i]->labels[l]->exprBindings[k].string, '[');
+        }
       }
 
       if(layer->class[i]->labels[l]->expression.type == MS_EXPRESSION)
@@ -867,13 +985,30 @@ int msLayerWhichItems(layerObj *layer, int get_all, const char *metadata)
   if(layer->utfdata.type == MS_EXPRESSION || (layer->utfdata.string && strchr(layer->utfdata.string,'[') != NULL && strchr(layer->utfdata.string,']') != NULL))
     nt += msCountChars(layer->utfdata.string, '[');
 
+  // if we are using a GetMap request with a WMS filter we don't need to return all items
+  if (msOWSLookupMetadata(&(layer->metadata), "G", "wmsfilter_flag") != NULL) {
+      get_all = MS_FALSE;
+  }
+
+  if(metadata == NULL){
+      // check item set by mapwfs.cpp to restrict the number of columns selected
+      metadata = msOWSLookupMetadata(&(layer->metadata), "G", "select_items");
+      if (metadata) {
+          /* get only selected items */
+          get_all = MS_FALSE;
+      }
+  }
+
+  /* always retrieve all items in some cases */
+  if(layer->connectiontype == MS_INLINE ||
+      (layer->map->outputformat && layer->map->outputformat->renderer == MS_RENDER_WITH_KML)) {
+    get_all = MS_TRUE;
+  }
+
   /*
   ** allocate space for the item list (worse case size)
   */
-
-  /* always retrieve all items in some cases */
-  if(layer->connectiontype == MS_INLINE || get_all == MS_TRUE ||
-      (layer->map->outputformat && layer->map->outputformat->renderer == MS_RENDER_WITH_KML)) {
+  if( get_all ) {
     rv = msLayerGetItems(layer);
     if(nt > 0) /* need to realloc the array to accept the possible new items*/
       layer->items = (char **)msSmallRealloc(layer->items, sizeof(char *)*(layer->numitems + nt));
@@ -883,90 +1018,19 @@ int msLayerWhichItems(layerObj *layer, int get_all, const char *metadata)
   if(rv != MS_SUCCESS)
     return rv;
 
-  /*
-  ** build layer item list, compute item indexes for explicity item references (e.g. classitem) or item bindings
-  */
-
-  /* layer items */
-  if(layer->classitem) layer->classitemindex = string2list(layer->items, &(layer->numitems), layer->classitem);
-  if(layer->filteritem) layer->filteritemindex = string2list(layer->items, &(layer->numitems), layer->filteritem);
-  if(layer->styleitem && (strcasecmp(layer->styleitem, "AUTO") != 0) && (strncasecmp(layer->styleitem, "javascript://",13) != 0)) 
-    layer->styleitemindex = string2list(layer->items, &(layer->numitems), layer->styleitem);
-  if(layer->labelitem) layer->labelitemindex = string2list(layer->items, &(layer->numitems), layer->labelitem);
-  if(layer->utfitem) layer->utfitemindex = string2list(layer->items, &(layer->numitems), layer->utfitem);
-
-  /* layer classes */
-  for(i=0; i<layer->numclasses; i++) {
-    
-    if(layer->class[i]->expression.type == MS_EXPRESSION) /* class expression */
-      msTokenizeExpression(&(layer->class[i]->expression), layer->items, &(layer->numitems));
-
-    /* class styles (items, bindings, geomtransform) */
-    for(j=0; j<layer->class[i]->numstyles; j++) {
-      if(layer->class[i]->styles[j]->rangeitem) 
-        layer->class[i]->styles[j]->rangeitemindex = string2list(layer->items, &(layer->numitems), layer->class[i]->styles[j]->rangeitem);
-      for(k=0; k<MS_STYLE_BINDING_LENGTH; k++) {
-        if(layer->class[i]->styles[j]->bindings[k].item) 
-          layer->class[i]->styles[j]->bindings[k].index = string2list(layer->items, &(layer->numitems), layer->class[i]->styles[j]->bindings[k].item);
-      }
-      if(layer->class[i]->styles[j]->_geomtransform.type == MS_GEOMTRANSFORM_EXPRESSION)
-        msTokenizeExpression(&(layer->class[i]->styles[j]->_geomtransform), layer->items, &(layer->numitems));
-    }
-
-    /* class labels and label styles (items, bindings, geomtransform) */
-    for(l=0; l<layer->class[i]->numlabels; l++) {
-      for(j=0; j<layer->class[i]->labels[l]->numstyles; j++) {
-        if(layer->class[i]->labels[l]->styles[j]->rangeitem) 
-          layer->class[i]->labels[l]->styles[j]->rangeitemindex = string2list(layer->items, &(layer->numitems), layer->class[i]->labels[l]->styles[j]->rangeitem);
-        for(k=0; k<MS_STYLE_BINDING_LENGTH; k++) {
-          if(layer->class[i]->labels[l]->styles[j]->bindings[k].item) 
-            layer->class[i]->labels[l]->styles[j]->bindings[k].index = string2list(layer->items, &(layer->numitems), layer->class[i]->labels[l]->styles[j]->bindings[k].item);
-          if(layer->class[i]->labels[l]->styles[j]->_geomtransform.type == MS_GEOMTRANSFORM_EXPRESSION)
-            msTokenizeExpression(&(layer->class[i]->labels[l]->styles[j]->_geomtransform), layer->items, &(layer->numitems));
-        }
-      }
-      for(k=0; k<MS_LABEL_BINDING_LENGTH; k++) {
-        if(layer->class[i]->labels[l]->bindings[k].item) 
-          layer->class[i]->labels[l]->bindings[k].index = string2list(layer->items, &(layer->numitems), layer->class[i]->labels[l]->bindings[k].item);
-      }
-
-       /* label expression */
-      if(layer->class[i]->labels[l]->expression.type == MS_EXPRESSION) msTokenizeExpression(&(layer->class[i]->labels[l]->expression), layer->items, &(layer->numitems));
-
-      /* label text */
-      if(layer->class[i]->labels[l]->text.type == MS_EXPRESSION || (layer->class[i]->labels[l]->text.string && strchr(layer->class[i]->labels[l]->text.string,'[') != NULL && strchr(layer->class[i]->labels[l]->text.string,']') != NULL))
-        msTokenizeExpression(&(layer->class[i]->labels[l]->text), layer->items, &(layer->numitems));
-    }
-
-    /* class text */
-    if(layer->class[i]->text.type == MS_EXPRESSION || (layer->class[i]->text.string && strchr(layer->class[i]->text.string,'[') != NULL && strchr(layer->class[i]->text.string,']') != NULL))
-      msTokenizeExpression(&(layer->class[i]->text), layer->items, &(layer->numitems));
-  }
-
-  /* layer filter */
-  if(layer->filter.type == MS_EXPRESSION) msTokenizeExpression(&(layer->filter), layer->items, &(layer->numitems));
-
-  /* cluster expressions */
-  if(layer->cluster.group.type == MS_EXPRESSION) msTokenizeExpression(&(layer->cluster.group), layer->items, &(layer->numitems));
-  if(layer->cluster.filter.type == MS_EXPRESSION) msTokenizeExpression(&(layer->cluster.filter), layer->items, &(layer->numitems));
-
-  /* utfdata */
-  if(layer->utfdata.type == MS_EXPRESSION || (layer->utfdata.string && strchr(layer->utfdata.string,'[') != NULL && strchr(layer->utfdata.string,']') != NULL)) {
-    msTokenizeExpression(&(layer->utfdata), layer->items, &(layer->numitems));
-  }
+  buildLayerItemList(layer);
 
   if(metadata) {
     char **tokens;
     int n = 0;
     int j;
-    int bFound = 0;
 
     tokens = msStringSplit(metadata, ',', &n);
     if(tokens) {
       for(i=0; i<n; i++) {
-        bFound = 0;
+        int bFound = 0;
         for(j=0; j<layer->numitems; j++) {
-          if(strcmp(tokens[i], layer->items[j]) == 0) {
+          if(strcasecmp(tokens[i], layer->items[j]) == 0) {
             bFound = 1;
             break;
           }
@@ -980,6 +1044,70 @@ int msLayerWhichItems(layerObj *layer, int get_all, const char *metadata)
       }
       msFreeCharArray(tokens, n);
     }
+
+    /* If we didn't retrieve all items of the layer, then do it, so that the */
+    /* order of the layer->items array is consistent with it. This is */
+    /* important so that WFS DescribeFeatureType and GetFeature requests */
+    /* return items in the same order */
+    if( !get_all && layer->numitems ) {
+        char** unsorted_items = layer->items;
+        int numitems = layer->numitems;
+
+        /* Retrieve all items */
+        layer->items = NULL;
+        layer->numitems = 0;
+        rv = msLayerGetItems(layer);
+        if( rv != MS_SUCCESS ) {
+            msFreeCharArray(unsorted_items, numitems);
+            return rv;
+        }
+
+        /* Sort unsorted_items in the order of layer->items */
+        char** sorted_items = (char **)msSmallMalloc(sizeof(char*) * numitems);
+        int num_sorted_items = 0;
+        for( i = 0; i < layer->numitems; i++ )
+        {
+            if( layer->items[i] )
+            {
+                for( j = 0; j < numitems; j++ )
+                {
+                    if( unsorted_items[j] &&
+                        strcasecmp(layer->items[i], unsorted_items[j]) == 0 )
+                    {
+                        sorted_items[num_sorted_items] = layer->items[i];
+                        num_sorted_items ++;
+
+                        layer->items[i] = NULL;
+                        msFree(unsorted_items[j]);
+                        unsorted_items[j] = NULL;
+                        break;
+                    }
+                }
+            }
+        }
+
+        /* Add items that are not returned by msLayerGetItems() (not sure if that can happen) */
+        for( j = 0; j < numitems; j++ )
+        {
+            if( unsorted_items[j] )
+            {
+                sorted_items[num_sorted_items] = unsorted_items[j];
+                num_sorted_items ++;
+            }
+        }
+
+        if(layer->numitems > 0) {
+            msFreeCharArray(layer->items, layer->numitems);
+        }
+        msFreeCharArray(unsorted_items, numitems);
+
+        layer->items = sorted_items;
+        layer->numitems = numitems;
+
+        /* Re-run buildLayerItemList() with the now correctly sorted items */
+        buildLayerItemList(layer);
+    }
+
   }
 
   /* populate the iteminfo array */
@@ -1014,8 +1142,6 @@ int msLayerSetItems(layerObj *layer, char **items, int numitems)
 
   /* populate the iteminfo array */
   return(msLayerInitItemInfo(layer));
-
-  return(MS_SUCCESS);
 }
 
 /*
@@ -1033,6 +1159,7 @@ int msLayerGetAutoStyle(mapObj *map, layerObj *layer, classObj *c, shapeObj* sha
     if (rv != MS_SUCCESS)
       return rv;
   }
+  cppcheck_assert(layer->vtable);
   return layer->vtable->LayerGetAutoStyle(map, layer, c, shape);
 }
 
@@ -1047,7 +1174,7 @@ int msLayerGetFeatureStyle(mapObj *map, layerObj *layer, classObj *c, shapeObj* 
   if (layer->styleitem && layer->styleitemindex >=0) {
     stylestring = msStrdup(shape->values[layer->styleitemindex]);
   }
-  else if (strncasecmp(layer->styleitem,"javascript://",13) == 0) {
+  else if (layer->styleitem && strncasecmp(layer->styleitem,"javascript://",13) == 0) {
 #ifdef USE_V8_MAPSCRIPT
     char *filename = layer->styleitem+13;
 
@@ -1087,7 +1214,7 @@ int msLayerGetFeatureStyle(mapObj *map, layerObj *layer, classObj *c, shapeObj* 
       return(MS_FAILURE);
     }
 
-    msUpdateStyleFromString(c->styles[0], stylestring, MS_FALSE);
+    msUpdateStyleFromString(c->styles[0], stylestring);
     if(c->styles[0]->symbolname) {
       if((c->styles[0]->symbol =  msGetSymbolIndex(&(map->symbolset), c->styles[0]->symbolname, MS_TRUE)) == -1) {
         msSetError(MS_MISCERR, "Undefined symbol \"%s\" in class of layer %s.", "msLayerGetFeatureStyle()", 
@@ -1102,7 +1229,7 @@ int msLayerGetFeatureStyle(mapObj *map, layerObj *layer, classObj *c, shapeObj* 
       resetClassStyle(c);
       c->layer = layer;
     }
-    msUpdateClassFromString(c, stylestring, MS_FALSE);
+    msUpdateClassFromString(c, stylestring);
   } else if (strncasecmp(stylestring,"pen",3) == 0 || strncasecmp(stylestring,"brush",5) == 0 ||
              strncasecmp(stylestring,"symbol",6) == 0 || strncasecmp(stylestring,"label",5) == 0) {
     msOGRUpdateStyleFromString(map, layer, c, stylestring);
@@ -1133,6 +1260,7 @@ int msLayerGetNumFeatures(layerObj *layer)
         if (rv != MS_SUCCESS)
             return result;
     }
+    cppcheck_assert(layer->vtable);
 
     result = layer->vtable->LayerGetNumFeatures(layer);
 
@@ -1202,7 +1330,7 @@ void msLayerAddProcessing( layerObj *layer, const char *directive )
   layer->processing[layer->numprocessing] = NULL;
 }
 
-char *msLayerGetProcessing( layerObj *layer, int proc_index)
+const char *msLayerGetProcessing( const layerObj *layer, int proc_index)
 {
   if (proc_index < 0 || proc_index >= layer->numprocessing) {
     msSetError(MS_CHILDERR, "Invalid processing index.", "msLayerGetProcessing()");
@@ -1212,7 +1340,7 @@ char *msLayerGetProcessing( layerObj *layer, int proc_index)
   }
 }
 
-char *msLayerGetProcessingKey( layerObj *layer, const char *key )
+const char *msLayerGetProcessingKey( const layerObj *layer, const char *key )
 {
   int i, len = strlen(key);
 
@@ -1295,16 +1423,20 @@ makeTimeFilter(layerObj *lp,
       msFreeExpression(&lp->filter);
     */
 
-    if (&lp->filter) {
-      /* if the filter is set and it's a sting type, concatenate it with
-         the time. If not just free it */
-      if (lp->filter.string && lp->filter.type == MS_STRING) {
-        pszBuffer = msStringConcatenate(pszBuffer, "((");
-        pszBuffer = msStringConcatenate(pszBuffer, lp->filter.string);
-        pszBuffer = msStringConcatenate(pszBuffer, ") and ");
-      } else {
-        msFreeExpression(&lp->filter);
-      }
+    /* if the filter is set and it's a sting type, concatenate it with
+       the time. If not just free it */
+    if (lp->filter.string && lp->filter.type == MS_STRING) {
+     pszBuffer = msStringConcatenate(pszBuffer, "((");
+     pszBuffer = msStringConcatenate(pszBuffer, lp->filter.string);
+     pszBuffer = msStringConcatenate(pszBuffer, ") and ");
+    } else if (lp->filter.string && lp->filter.type == MS_EXPRESSION) {
+     char* pszExpressionString = msGetExpressionString(&(lp->filter));
+     pszBuffer = msStringConcatenate(pszBuffer, "(");
+     pszBuffer = msStringConcatenate(pszBuffer, pszExpressionString);
+     pszBuffer = msStringConcatenate(pszBuffer, " and ");
+     msFree(pszExpressionString);
+    } else {
+     msFreeExpression(&lp->filter);
     }
 
     pszBuffer = msStringConcatenate(pszBuffer, "(");
@@ -1335,15 +1467,15 @@ makeTimeFilter(layerObj *lp,
     pszBuffer = msStringConcatenate(pszBuffer, ")");
 
     /* if there was a filter, It was concatenate with an And ans should be closed*/
-    if(&lp->filter && lp->filter.string && lp->filter.type == MS_STRING) {
+    if (lp->filter.string &&
+       (lp->filter.type == MS_STRING || lp->filter.type == MS_EXPRESSION))
       pszBuffer = msStringConcatenate(pszBuffer, ")");
-    }
+
 
     msLoadExpressionString(&lp->filter, pszBuffer);
 
     if (pszBuffer)
       msFree(pszBuffer);
-
     return MS_TRUE;
   }
 
@@ -1353,13 +1485,20 @@ makeTimeFilter(layerObj *lp,
     return MS_FALSE;
   }
 
-  if (&lp->filter && lp->filter.string && lp->filter.type == MS_STRING) {
+  if (lp->filter.string && lp->filter.type == MS_STRING) {
     pszBuffer = msStringConcatenate(pszBuffer, "((");
     pszBuffer = msStringConcatenate(pszBuffer, lp->filter.string);
     pszBuffer = msStringConcatenate(pszBuffer, ") and ");
     /*this flag is used to indicate that the buffer contains only the
       existing filter. It is set to 0 when time filter parts are
       added to the buffer */
+    bOnlyExistingFilter = 1;
+  } else if (lp->filter.string && lp->filter.type == MS_EXPRESSION) {
+    char* pszExpressionString = msGetExpressionString(&(lp->filter));
+    pszBuffer = msStringConcatenate(pszBuffer, "(");
+    pszBuffer = msStringConcatenate(pszBuffer, pszExpressionString);
+    pszBuffer = msStringConcatenate(pszBuffer, " and ");
+    msFree(pszExpressionString);
     bOnlyExistingFilter = 1;
   } else
     msFreeExpression(&lp->filter);
@@ -1478,7 +1617,7 @@ makeTimeFilter(layerObj *lp,
 
   /* load the string to the filter */
   if (pszBuffer && strlen(pszBuffer) > 0) {
-    if(&lp->filter && lp->filter.string && lp->filter.type == MS_STRING)
+    if(lp->filter.string && (lp->filter.type == MS_STRING || lp->filter.type == MS_EXPRESSION ))
       pszBuffer = msStringConcatenate(pszBuffer, ")");
     /*
     if(lp->filteritem)
@@ -1497,15 +1636,16 @@ makeTimeFilter(layerObj *lp,
   set the filter parameter for a time filter
 **/
 
-int msLayerSetTimeFilter(layerObj *lp, const char *timestring,
+int msLayerSetTimeFilter(layerObj *layer, const char *timestring,
                          const char *timefield)
 {
-  if ( ! lp->vtable) {
-    int rv =  msInitializeVirtualTable(lp);
+  if ( ! layer->vtable) {
+    int rv =  msInitializeVirtualTable(layer);
     if (rv != MS_SUCCESS)
       return rv;
   }
-  return lp->vtable->LayerSetTimeFilter(lp, timestring, timefield);
+  cppcheck_assert(layer->vtable);
+  return layer->vtable->LayerSetTimeFilter(layer, timestring, timefield);
 }
 
 int
@@ -1528,36 +1668,47 @@ msLayerMakePlainTimeFilter(layerObj *lp, const char *timestring,
  */
 int LayerDefaultInitItemInfo(layerObj *layer)
 {
+  (void)layer;
   return MS_SUCCESS;
 }
 
 void LayerDefaultFreeItemInfo(layerObj *layer)
 {
-  return;
+  (void)layer;
 }
 
 int LayerDefaultOpen(layerObj *layer)
 {
+  (void)layer;
   return MS_FAILURE;
 }
 
 int LayerDefaultIsOpen(layerObj *layer)
 {
+  (void)layer;
   return MS_FALSE;
 }
 
 int LayerDefaultWhichShapes(layerObj *layer, rectObj rect, int isQuery)
 {
+  (void)layer;
+  (void)rect;
+  (void)isQuery;
   return MS_SUCCESS;
 }
 
 int LayerDefaultNextShape(layerObj *layer, shapeObj *shape)
 {
+  (void)layer;
+  (void)shape;
   return MS_FAILURE;
 }
 
 int LayerDefaultGetShape(layerObj *layer, shapeObj *shape, resultObj *record)
 {
+  (void)layer;
+  (void)shape;
+  (void)record;
   return MS_FAILURE;
 }
 
@@ -1567,11 +1718,11 @@ int LayerDefaultGetShapeCount(layerObj *layer, rectObj rect, projectionObj *rect
   shapeObj shape, searchshape;
   int nShapeCount = 0;
   rectObj searchrect = rect;
+  reprojectionObj* reprojector = NULL;
 
   msInitShape(&searchshape);
   msRectToPolygon(searchrect, &searchshape);
 
-#ifdef USE_PROJ
   if( rectProjection != NULL ) 
   {
     if(layer->project && msProjectionsDiffer(&(layer->projection), rectProjection))
@@ -1579,7 +1730,6 @@ int LayerDefaultGetShapeCount(layerObj *layer, rectObj rect, projectionObj *rect
     else
       layer->project = MS_FALSE;
   }
-#endif
 
   status = msLayerWhichShapes(layer, searchrect, MS_TRUE) ;
   if( status == MS_FAILURE )
@@ -1598,12 +1748,15 @@ int LayerDefaultGetShapeCount(layerObj *layer, rectObj rect, projectionObj *rect
   {
     if( rectProjection != NULL ) 
     {
-#ifdef USE_PROJ
       if(layer->project && msProjectionsDiffer(&(layer->projection), rectProjection))
-        msProjectShape(&(layer->projection), rectProjection, &shape);
+      {
+        if( reprojector == NULL )
+            reprojector = msProjectCreateReprojector(&(layer->projection), rectProjection);
+        if( reprojector )
+            msProjectShapeEx(reprojector, &shape);
+      }
       else
         layer->project = MS_FALSE;
-#endif
 
       if(msRectContained(&shape.bounds, &rect) == MS_TRUE) { /* if the whole shape is in, don't intersect */
         status = MS_TRUE;
@@ -1634,17 +1787,20 @@ int LayerDefaultGetShapeCount(layerObj *layer, rectObj rect, projectionObj *rect
   }
 
   msFreeShape(&searchshape);
+  msProjectDestroyReprojector(reprojector);
 
   return nShapeCount;
 }
 
 int LayerDefaultClose(layerObj *layer)
 {
+  (void)layer;
   return MS_SUCCESS;
 }
 
 int LayerDefaultGetItems(layerObj *layer)
 {
+  (void)layer;
   return MS_SUCCESS; /* returning no items is legit */
 }
 
@@ -1652,12 +1808,7 @@ int
 msLayerApplyCondSQLFilterToLayer(FilterEncodingNode *psNode, mapObj *map,
                                  int iLayerIndex)
 {
-#ifdef USE_OGR
   return FLTLayerApplyCondSQLFilterToLayer(psNode, map, iLayerIndex);
-
-#else
-  return MS_FAILURE;
-#endif
 }
 
 int msLayerSupportsPaging(layerObj *layer)
@@ -1735,11 +1886,7 @@ char* msLayerBuildSQLOrderBy(layerObj *layer)
 int
 msLayerApplyPlainFilterToLayer(FilterEncodingNode *psNode, mapObj *map, int iLayerIndex)
 {
-#ifdef USE_OGR
   return FLTLayerApplyPlainFilterToLayer(psNode, map, iLayerIndex);
-#else
-  return MS_FAILURE;
-#endif
 }
 
 int msLayerGetPaging(layerObj *layer)
@@ -1751,6 +1898,7 @@ int msLayerGetPaging(layerObj *layer)
       return MS_FAILURE;
     }
   }
+  cppcheck_assert(layer->vtable);
   return layer->vtable->LayerGetPaging(layer);
 }
 
@@ -1763,22 +1911,30 @@ void msLayerEnablePaging(layerObj *layer, int value)
       return;
     }
   }
-  return layer->vtable->LayerEnablePaging(layer, value);
+  cppcheck_assert(layer->vtable);
+  layer->vtable->LayerEnablePaging(layer, value);
 }
 
 int LayerDefaultGetExtent(layerObj *layer, rectObj *extent)
 {
+  (void)layer;
+  (void)extent;
   return MS_FAILURE;
 }
 
 int LayerDefaultGetAutoStyle(mapObj *map, layerObj *layer, classObj *c, shapeObj *shape)
 {
+  (void)map;
+  (void)layer;
+  (void)c;
+  (void)shape;
   msSetError(MS_MISCERR, "'STYLEITEM AUTO' not supported for this data source.", "msLayerGetAutoStyle()");
   return MS_FAILURE;
 }
 
 int LayerDefaultCloseConnection(layerObj *layer)
 {
+  (void)layer;
   return MS_SUCCESS;
 }
 
@@ -1836,17 +1992,22 @@ int LayerDefaultGetNumFeatures(layerObj *layer)
 
 int LayerDefaultAutoProjection(layerObj *layer, projectionObj* projection)
 {
+  (void)layer;
+  (void)projection;
   msSetError(MS_MISCERR, "This data driver does not implement AUTO projection support", "LayerDefaultAutoProjection()");
   return MS_FAILURE;
 }
 
 int LayerDefaultSupportsCommonFilters(layerObj *layer)
 {
+  (void)layer;
   return MS_FALSE;
 }
 
 int LayerDefaultTranslateFilter(layerObj *layer, expressionObj *filter, char *filteritem) 
 {
+  (void)layer;
+  (void)filteritem;
   if(!filter->string) return MS_SUCCESS; /* nothing to do, not an error */
 
   msSetError(MS_MISCERR, "This data driver does not implement filter translation support", "LayerDefaultTranslateFilter()");
@@ -1855,12 +2016,14 @@ int LayerDefaultTranslateFilter(layerObj *layer, expressionObj *filter, char *fi
 
 int msLayerDefaultGetPaging(layerObj *layer)
 {
+  (void)layer;
   return MS_FALSE;
 }
 
 void msLayerDefaultEnablePaging(layerObj *layer, int value)
 {
-  return;
+  (void)layer;
+  (void)value;
 }
 
 /************************************************************************/
@@ -1872,6 +2035,7 @@ void msLayerDefaultEnablePaging(layerObj *layer, int value)
 /************************************************************************/
 char *LayerDefaultEscapeSQLParam(layerObj *layer, const char* pszString)
 {
+  (void)layer;
   char *pszEscapedStr=NULL;
   if (pszString) {
     int nSrcLen;
@@ -2049,6 +2213,9 @@ int msInitializeVirtualTable(layerObj *layer)
     case(MS_OGR):
       return(msOGRLayerInitializeVirtualTable(layer));
       break;
+    case(MS_FLATGEOBUF):
+      return(msFlatGeobufLayerInitializeVirtualTable(layer));
+      break;
     case(MS_POSTGIS):
       return(msPostGISLayerInitializeVirtualTable(layer));
       break;
@@ -2158,6 +2325,7 @@ int msINLINELayerClose(layerObj *layer)
 
 int msINLINELayerWhichShapes(layerObj *layer, rectObj rect, int isQuery)
 {
+  (void)isQuery;
   msINLINELayerInfo *layerinfo = NULL;  
   layerinfo = (msINLINELayerInfo*) layer->layerinfo;
 
@@ -2263,6 +2431,7 @@ char  *msLayerEscapeSQLParam(layerObj *layer, const char*pszString)
     if (rv != MS_SUCCESS)
       return "";
   }
+  cppcheck_assert(layer->vtable);
   return layer->vtable->LayerEscapeSQLParam(layer, pszString);
 }
 
@@ -2273,6 +2442,7 @@ char  *msLayerEscapePropertyName(layerObj *layer, const char*pszString)
     if (rv != MS_SUCCESS)
       return "";
   }
+  cppcheck_assert(layer->vtable);
   return layer->vtable->LayerEscapePropertyName(layer, pszString);
 }
 

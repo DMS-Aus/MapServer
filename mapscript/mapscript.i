@@ -33,6 +33,8 @@
 %begin %{
 #ifdef _MSC_VER
 #define SWIG_PYTHON_INTERPRETER_NO_DEBUG
+#else
+#define _GNU_SOURCE 1
 #endif
 %}
 
@@ -64,7 +66,7 @@
 #include "../../mapprimitive.h"
 #include "../../mapshape.h"
 
-#if defined(WIN32) && defined(SWIGCSHARP)
+#if defined(_WIN32) && defined(SWIGCSHARP)
 /* <windows.h> is needed for GetExceptionCode() for unhandled exception */
 #include <windows.h>
 #endif
@@ -257,19 +259,24 @@ typedef struct {
 %include "../../mapserver.h"
 %include "../../mapserver-version.h"
 %include "../../mapprimitive.h"
+%include "../../maperror.h"
 %include "../../mapshape.h"
 %include "../../mapproject.h"
 %include "../../mapsymbol.h"
+%include "../../maphash.h"
+%include "../../maperror.h"
+%include "../../mapserv-config.h"
 
 %apply Pointer NONNULL { mapObj *map };
 %apply Pointer NONNULL { layerObj *layer };
+%apply Pointer NONNULL { configObj *config };
 
 /* 
 =============================================================================
  Class extension methods are now included from separate interface files  
 =============================================================================
 */
-   
+
 %include "../swiginc/error.i"
 %include "../swiginc/map.i"
 %include "../swiginc/mapzoom.i"
@@ -302,6 +309,8 @@ typedef struct {
 %include "../swiginc/legend.i"
 %include "../swiginc/referencemap.i"
 %include "../swiginc/querymap.i"
+%include "../swiginc/config.i"
+%include "../swiginc/reprojection.i"
 
 /* 
 =============================================================================

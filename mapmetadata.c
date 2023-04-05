@@ -31,6 +31,13 @@
 #include "mapowscommon.h"
 #include "maplibxml2.h"
 
+#if defined(USE_WMS_SVR) || defined (USE_WFS_SVR) || defined (USE_WCS_SVR) || defined(USE_SOS_SVR) || defined(USE_WMS_LYR) || defined(USE_WFS_LYR)
+
+#ifdef USE_LIBXML2
+
+static
+int msMetadataParseRequest(cgiRequestObj *request,
+                      metadataParamsObj *metadataparams);
 
 /************************************************************************/
 /*                   _msMetadataGetCharacterString                      */
@@ -99,7 +106,6 @@ xmlNodePtr _msMetadataGetOnline(xmlNsPtr namespace, layerObj *layer, const char 
   int status;
   char *url = NULL;
   char buffer[32];
-  char *epsg_str;
   const char *link_protocol = "unknown protocol";
 
   xmlNodePtr psNode = NULL;
@@ -209,7 +215,7 @@ xmlNodePtr _msMetadataGetDecimal(xmlNsPtr namespace, const char *name, double va
 
   xmlNodePtr psNode = NULL;
 
-  sprintf(buffer, "%f", value);
+  snprintf(buffer, sizeof(buffer), "%.6f", value);
 
   if( *ppsNsGco == NULL )
     *ppsNsGco = xmlNewNs(NULL, BAD_CAST "http://www.isotc211.org/2005/gmd", BAD_CAST "gco");
@@ -230,7 +236,7 @@ xmlNodePtr _msMetadataGetDecimal(xmlNsPtr namespace, const char *name, double va
 /*      Create a gmd:name/gmd:* code list element pattern               */
 /************************************************************************/
 
-xmlNodePtr _msMetadataGetCodeList(xmlNsPtr namespace, char *parent_element, char *name, char *value) {
+xmlNodePtr _msMetadataGetCodeList(xmlNsPtr namespace, const char *parent_element, const char *name, const char *value) {
   char *codelist = NULL;
   xmlNodePtr psNode = NULL;
   xmlNodePtr psCodeNode = NULL;
@@ -244,35 +250,6 @@ xmlNodePtr _msMetadataGetCodeList(xmlNsPtr namespace, char *parent_element, char
   xmlNewProp(psCodeNode, BAD_CAST "codeList", BAD_CAST codelist);
   xmlNewProp(psCodeNode, BAD_CAST "codeListValue", BAD_CAST value);
   msFree(codelist);
-  return psNode;
-}
-
-
-/************************************************************************/
-/*                   _msMetadataGetDate                                 */
-/*                                                                      */
-/*      Create a gmd:date or gmd:dateStamp element pattern              */
-/************************************************************************/
-
-static
-xmlNodePtr _msMetadataGetDate(xmlNsPtr namespace, const char *parent_element, const char *date_type, const char *value, xmlNsPtr* ppsNsGco) {
-  xmlNodePtr psNode = NULL;
-  xmlNodePtr psNode2 = NULL;
-
-  if( *ppsNsGco == NULL )
-    *ppsNsGco = xmlNewNs(NULL, BAD_CAST "http://www.isotc211.org/2005/gmd", BAD_CAST "gco");
-
-  psNode = xmlNewNode(namespace, BAD_CAST parent_element);
-
-  if (date_type == NULL) {  /* it's a gmd:dateStamp */
-      xmlNewChild(psNode, *ppsNsGco, BAD_CAST "Date", BAD_CAST value);
-      return psNode;
-  }
-
-  psNode2 = xmlNewChild(psNode, namespace, BAD_CAST "date", NULL);
-  xmlNewChild(psNode2, *ppsNsGco, BAD_CAST "Date", BAD_CAST value);
-  xmlAddChild(psNode, _msMetadataGetCodeList(namespace, "dateType", "CI_DateTypeCode", date_type));
-
   return psNode;
 }
 
@@ -310,7 +287,7 @@ xmlNodePtr _msMetadataGetGMLTimePeriod(char **temporal)
 static
 xmlNodePtr _msMetadataGetExtent(xmlNsPtr namespace, layerObj *layer, xmlNsPtr *ppsNsGco)
 {
-  int n;
+  int n = 0;
   int status;
   char *value = NULL;
   char **temporal = NULL;
@@ -365,10 +342,9 @@ xmlNodePtr _msMetadataGetExtent(xmlNsPtr namespace, layerObj *layer, xmlNsPtr *p
       psTNode2 = xmlNewChild(psTNode, namespace, BAD_CAST "EX_TemporalExtent", NULL);
       psENode = xmlNewChild(psTNode2, namespace, BAD_CAST "extent", NULL);
       xmlAddChild(psENode, _msMetadataGetGMLTimePeriod(temporal));
-
-      msFreeCharArray(temporal, n);
     }
   }
+  msFreeCharArray(temporal, n);
 
   return psNode;
 }
@@ -502,10 +478,7 @@ xmlNodePtr _msMetadataGetContact(xmlNsPtr namespace, char *contact_element, mapO
 static
 xmlNodePtr _msMetadataGetIdentificationInfo(xmlNsPtr namespace, mapObj *map, layerObj *layer, xmlNsPtr *ppsNsGco)
 {
-  int i = 0;
-  int n;
   char *value;
-  char **tokens = NULL;
   xmlNodePtr psNode = NULL;
   xmlNodePtr psDINode = NULL;
   xmlNodePtr psCNode = NULL;
@@ -527,8 +500,12 @@ xmlNodePtr _msMetadataGetIdentificationInfo(xmlNsPtr namespace, mapObj *map, lay
   xmlAddChild(psCINode, _msMetadataGetCharacterString(namespace, "title", value, ppsNsGco));
 
   psDNode = xmlNewChild(psCINode, namespace, BAD_CAST "date", NULL);
+  xmlNewNsProp(psDNode, *ppsNsGco, BAD_CAST "nilReason", BAD_CAST "missing");
 
-  xmlAddChild(psDNode, _msMetadataGetDate(namespace, "CI_Date", "publication", "2011", ppsNsGco));
+  value = (char *)msOWSLookupMetadata(&(layer->metadata), "MCFGO", "attribution_title");
+  if (value) {
+      xmlAddChild(psCINode, _msMetadataGetCharacterString(namespace, "otherCitationDetails", value, ppsNsGco));
+  }
 
   value = (char *)msOWSLookupMetadata(&(layer->metadata), "MCFGO", "abstract");
   if (!value)
@@ -541,13 +518,14 @@ xmlNodePtr _msMetadataGetIdentificationInfo(xmlNsPtr namespace, mapObj *map, lay
     psKWNode = xmlNewChild(psDINode, namespace, BAD_CAST "descriptiveKeywords", NULL);
     psMDKNode = xmlNewChild(psKWNode, namespace, BAD_CAST "MD_Keywords", NULL);
 
-    tokens = msStringSplit(value, ',', &n);
+    int n = 0;
+    char** tokens = msStringSplit(value, ',', &n);
     if (tokens && n > 0) {
-      for (i=0; i<n; i++) {
+      for (int i=0; i<n; i++) {
         xmlAddChild(psMDKNode, _msMetadataGetCharacterString(namespace, "keyword", tokens[i], ppsNsGco));
       }
-      msFreeCharArray(tokens, n);
     }
+    msFreeCharArray(tokens, n);
   }
 
   xmlAddChild(psDINode, _msMetadataGetCharacterString(namespace, "language", (char *)msOWSGetLanguage(map, "exception"), ppsNsGco));
@@ -691,11 +669,11 @@ xmlNodePtr msMetadataGetExceptionReport(mapObj *map, char *code, char *locator, 
 /************************************************************************/
 /*                   msMetadataGetLayerMetadata                         */
 /*                                                                      */
-/*      Generate an ISO 19139:2007 representation of layer metadata     */
+/*      Generate an ISO 19139-1:2019 representation of layer metadata   */
 /************************************************************************/
 
 static
-xmlNodePtr msMetadataGetLayerMetadata(mapObj *map, metadataParamsObj *paramsObj, cgiRequestObj *cgi_request, owsRequestObj *ows_request, xmlNsPtr* ppsNsOws, xmlNsPtr* ppsNsXsi, xmlNsPtr* ppsNsGmd, xmlNsPtr* ppsNsGco)
+xmlNodePtr msMetadataGetLayerMetadata(mapObj *map, metadataParamsObj *paramsObj, cgiRequestObj *cgi_request, xmlNsPtr* ppsNsOws, xmlNsPtr* ppsNsXsi, xmlNsPtr* ppsNsGmd, xmlNsPtr* ppsNsGco)
 {
   int i;
   int layer_found = MS_FALSE;
@@ -709,6 +687,11 @@ xmlNodePtr msMetadataGetLayerMetadata(mapObj *map, metadataParamsObj *paramsObj,
     if(strcasecmp(GET_LAYER(map, i)->name, paramsObj->pszLayer) == 0) {
         layer_found = MS_TRUE;
         layer = GET_LAYER(map, i);
+        // when checking a layer with clustering msLayerGetExtent does not have access
+        // to the source layer, so remove clustering first
+        if (layer->cluster.region) {
+            layer->cluster.region = NULL;
+        }
         break;
     }
   }
@@ -785,7 +768,7 @@ xmlNodePtr msMetadataGetLayerMetadata(mapObj *map, metadataParamsObj *paramsObj,
 /*   MapServer request.                                                 */
 /************************************************************************/
 
-int msMetadataDispatch(mapObj *map, cgiRequestObj *cgi_request, owsRequestObj *ows_request)
+int msMetadataDispatch(mapObj *map, cgiRequestObj *cgi_request)
 {
   int i;
   int status = MS_SUCCESS;
@@ -804,13 +787,13 @@ int msMetadataDispatch(mapObj *map, cgiRequestObj *cgi_request, owsRequestObj *o
 
   xml_document = xmlNewDoc(BAD_CAST "1.0");
 
-  if (msMetadataParseRequest(map, cgi_request, ows_request, paramsObj) == MS_FAILURE) {
+  if (msMetadataParseRequest(cgi_request, paramsObj) == MS_FAILURE) {
     psRootNode = msMetadataGetExceptionReport(map, "InvalidRequest", "layer", "Request parsing failed", &psNsOws);
     status = MS_FAILURE;
   }
 
   /* if layer= is not specified, */
-  if (paramsObj->pszLayer==NULL || strlen(paramsObj->pszLayer)<=0) {
+  if (paramsObj->pszLayer==NULL || strlen(paramsObj->pszLayer)==0) {
     psRootNode = msMetadataGetExceptionReport(map, "MissingParameterValue", "layer", "Missing layer parameter", &psNsOws);
     status = MS_FAILURE;
   }
@@ -829,7 +812,7 @@ int msMetadataDispatch(mapObj *map, cgiRequestObj *cgi_request, owsRequestObj *o
       msIO_sendHeaders();
     }
     else {
-      psRootNode = msMetadataGetLayerMetadata(map, paramsObj, cgi_request, ows_request, &psNsOws, &psNsXsi, &psNsGmd, &psNsGco);
+      psRootNode = msMetadataGetLayerMetadata(map, paramsObj, cgi_request, &psNsOws, &psNsXsi, &psNsGmd, &psNsGco);
     }
   }
 
@@ -860,6 +843,8 @@ int msMetadataDispatch(mapObj *map, cgiRequestObj *cgi_request, owsRequestObj *o
 
   return status;
 }
+
+#endif /* USE_LIBXML2 */
 
 /************************************************************************/
 /*                           msMetadataCreateParamsObj                  */
@@ -902,16 +887,15 @@ void msMetadataFreeParamsObj(metadataParamsObj *metadataparams)
 /*      Parse request into the params object.                           */
 /************************************************************************/
 
-int msMetadataParseRequest(mapObj *map, cgiRequestObj *request, owsRequestObj *ows_request,
+static
+int msMetadataParseRequest(cgiRequestObj *request,
                       metadataParamsObj *metadataparams)
 {
-  int i = 0;
-
   if (!request || !metadataparams)
     return MS_FAILURE;
 
   if (request->NumParams > 0) {
-    for(i=0; i<request->NumParams; i++) {
+    for(int i=0; i<request->NumParams; i++) {
       if (request->ParamNames[i] && request->ParamValues[i]) {
         if (strcasecmp(request->ParamNames[i], "LAYER") == 0)
           metadataparams->pszLayer = msStrdup(request->ParamValues[i]);
@@ -947,3 +931,4 @@ void msMetadataSetGetMetadataURL(layerObj *lp, const char *url)
   msFree(pszMetadataURL);
 }
 
+#endif

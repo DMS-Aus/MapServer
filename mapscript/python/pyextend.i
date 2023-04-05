@@ -13,6 +13,11 @@
  *
  *****************************************************************************/
 
+// required for Python 3.10+ - see https://bugs.python.org/issue40943
+%begin %{
+#define PY_SSIZE_T_CLEAN
+%}
+
 /* fromstring: Factory for mapfile objects */
 
 %pythoncode %{
@@ -222,18 +227,16 @@ def fromstring(data, mappath=None):
                         }
                     }
 
-        def getItemDefinitions(self):
+        @property
+        def itemdefinitions(self):
             return self._item_definitions
 
-        def setItemDefinitions(self, item_definitions):
+        @itemdefinitions.setter
+        def itemdefinitions(self, item_definitions):
             self._item_definitions = item_definitions
-
-        __swig_getmethods__["itemdefinitions"] = getItemDefinitions
-        __swig_setmethods__["itemdefinitions"] = setItemDefinitions
 
 %}
 }
-
 
 /******************************************************************************
  * Extensions to mapObj
@@ -241,9 +244,9 @@ def fromstring(data, mappath=None):
 
 %extend mapObj {
   
-    /* getLayerOrder() extension returns the map layerorder as a native
-     sequence */
-
+    /**
+    \**Python MapScript only**  - returns the map layer order as a native sequence
+    */
     PyObject *getLayerOrder() {
         int i;
         PyObject *order;
@@ -254,15 +257,21 @@ def fromstring(data, mappath=None):
         return order;
     } 
 
+    /**
+    \**Python MapScript only** - sets the map layer order using a native sequence
+    */
     int setLayerOrder(PyObject *order) {
-        int i, size;
-        size = PyTuple_Size(order);
+        int i;
+        Py_ssize_t size = PyTuple_Size(order);
         for (i = 0; i < size; i++) {
             self->layerorder[i] = (int)PyInt_AsLong(PyTuple_GetItem(order, i));
         }
         return MS_SUCCESS;
     }
     
+    /**
+    \**Python MapScript only** - gets the map size as a tuple
+    */
     PyObject* getSize()
     {
         PyObject* output ;
@@ -275,19 +284,35 @@ def fromstring(data, mappath=None):
 %pythoncode %{
 
     def get_height(self):
+        """
+        **Python MapScript only**
+        Return the map height from the map size
+        """
         return self.getSize()[1] # <-- second member is the height
 
     def get_width(self):
+        """
+        **Python MapScript only**
+        Return the map width from the map size
+        """
         return self.getSize()[0] # <-- first member is the width
 
     def set_height(self, value):
+        """
+        **Python MapScript only**
+        Set the map height value of the map size
+        """
         return self.setSize(self.getSize()[0], value)
 
     def set_width(self, value):
+        """
+        **Python MapScript only**
+        Set the map width value of the map size
+        """
         return self.setSize(value, self.getSize()[1])
 
-    width = property(get_width, set_width)
-    height = property(get_height, set_height)
+    width = property(get_width, set_width, doc="See :ref:`SIZE <mapfile-map-size>`")
+    height = property(get_height, set_height, doc = "See :ref:`SIZE <mapfile-map-size>`")
 
 %}
 }
@@ -323,20 +348,17 @@ def fromstring(data, mappath=None):
     
 %extend imageObj {
 
-    /* ======================================================================
-       write()
-
-       Write image data to an open Python file or file-like object.
-       Overrides extension method in mapscript/swiginc/image.i.
-       Intended to replace saveToString.
-    ====================================================================== */
+    /**
+    Write image data to an open file handle. Replaces
+    the removed saveToString function.  See ``python/pyextend.i`` for the Python specific
+    version of this method.
+    */
     int write( PyObject *file=Py_None )
     {
         unsigned char *imgbuffer=NULL;
         int imgsize;
         PyObject *noerr;
         int retval=MS_FAILURE;
-        rendererVTableObj *renderer = NULL;
 
         /* Return immediately if image driver is not GD */
         if ( !MS_RENDERER_PLUGIN(self->format) )
@@ -360,7 +382,7 @@ def fromstring(data, mappath=None):
 
 %#if PY_MAJOR_VERSION >= 3
             // https://docs.python.org/3/c-api/arg.html
-            noerr = PyObject_CallMethod(file, "write", "y#", imgbuffer, imgsize);
+            noerr = PyObject_CallMethod(file, "write", "y#", imgbuffer, (Py_ssize_t)imgsize);
 %#else
             // https://docs.python.org/2/c-api/arg.html
             noerr = PyObject_CallMethod(file, "write", "s#", imgbuffer, imgsize);
@@ -376,24 +398,6 @@ def fromstring(data, mappath=None):
 
         return retval;
     }
-
-    /* Deprecated */  
-    PyObject *saveToString() {
-        int size=0;
-        unsigned char *imgbytes;
-        PyObject *imgstring; 
-
-        imgbytes = msSaveImageBuffer(self, &size, self->format);
-        if (size == 0)
-        {
-            msSetError(MS_IMGERR, "failed to get image buffer", "saveToString()");
-            return NULL;
-        }
-        imgstring = PyBytes_FromStringAndSize((const char*) imgbytes, size);
-        free(imgbytes);
-        return imgstring;
-    }
-
 }
 
 
@@ -403,6 +407,7 @@ def fromstring(data, mappath=None):
 
 %extend styleObj {
 
+    /// **Python Only** Set the pattern for the style.
     void pattern_set(int nListSize, double* pListValues)
     {
         if( nListSize < 2 )
@@ -419,6 +424,7 @@ def fromstring(data, mappath=None):
         self->patternlength = nListSize;
     }
 
+    /// **Python Only** Get the pattern for the style.
     void pattern_get(double** argout, int* pnListSize)
     {
         *pnListSize = self->patternlength;
@@ -426,24 +432,13 @@ def fromstring(data, mappath=None):
         memcpy( *argout, self->pattern, sizeof(double) * *pnListSize);
     }
 
-    void patternlength_set2(int patternlength)
-    {
-        msSetError(MS_MISCERR, "pattern is read-only", "patternlength_set()");
-    }
 
 %pythoncode %{
 
-    __swig_setmethods__["patternlength"] = _mapscript.styleObj_patternlength_set2
-    __swig_getmethods__["patternlength"] = _mapscript.styleObj_patternlength_get
-    if _newclass:patternlength = _swig_property(_mapscript.styleObj_patternlength_get, _mapscript.styleObj_patternlength_set2)
+pattern = property(pattern_get, pattern_set, doc=r"""pattern : list **Python Only**""")
 
-    __swig_setmethods__["pattern"] = _mapscript.styleObj_pattern_set
-    __swig_getmethods__["pattern"] = _mapscript.styleObj_pattern_get
-    if _newclass:pattern = _swig_property(_mapscript.styleObj_pattern_get, _mapscript.styleObj_pattern_set)
 %}
-
 }
-
 
 /******************************************************************************
  * Extensions to hashTableObj - add dict methods
@@ -469,6 +464,10 @@ def fromstring(data, mappath=None):
         return self.numitems
 
     def keys(self):
+        """
+        **Python-only**. In Python MapScript the ``hashTableObj`` can be used and accessed
+        as a dictionary. The ``keys`` method returns a view of all the keys in the ``hashTableObj``.
+        """
 
         keys = []
         k = None

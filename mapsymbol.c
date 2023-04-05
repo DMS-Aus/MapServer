@@ -48,10 +48,6 @@ extern FILE *msyyin;
 
 extern int msyystate;
 
-static const unsigned char PNGsig[8] = {137, 80, 78, 71, 13, 10, 26, 10}; /* 89 50 4E 47 0D 0A 1A 0A hex */
-static const unsigned char JPEGsig[3] = {255, 216, 255}; /* FF D8 FF hex */
-
-
 void freeImageCache(struct imageCacheObj *ic)
 {
   if(ic) {
@@ -72,13 +68,12 @@ void freeImageCache(struct imageCacheObj *ic)
 */
 double msSymbolGetDefaultSize(symbolObj *s)
 {
-  double size;
+  double size = 1;
   if(s == NULL)
     return 1;
 
   switch(s->type) {
     case(MS_SYMBOL_TRUETYPE):
-      size = 1;
       break;
     case(MS_SYMBOL_PIXMAP):
       assert(s->pixmap_buffer != NULL);
@@ -86,7 +81,6 @@ double msSymbolGetDefaultSize(symbolObj *s)
       size = (double)s->pixmap_buffer->height;
       break;
     case(MS_SYMBOL_SVG):
-      size = 1;
 #if defined(USE_SVG_CAIRO) || defined (USE_RSVG)
       assert(s->renderer_cache != NULL);
       size = s->sizey;
@@ -166,13 +160,16 @@ int loadSymbol(symbolObj *s, char *symbolpath)
   for(;;) {
     switch(msyylex()) {
       case(ANCHORPOINT):
-        if(getDouble(&(s->anchorpoint_x)) == -1) return MS_FAILURE;
-        if(getDouble(&(s->anchorpoint_y)) == -1) return MS_FAILURE;
-        if(s->anchorpoint_x<0 || s->anchorpoint_x>1 || s->anchorpoint_y<0 || s->anchorpoint_y>1) {
+	if(getDouble(&(s->anchorpoint_x), MS_NUM_CHECK_RANGE, 0, 1) == -1) {
+	  msSetError(MS_SYMERR, "ANCHORPOINT must be between 0 and 1", "loadSymbol()");
+          return -1;
+        }
+        if(getDouble(&(s->anchorpoint_y), MS_NUM_CHECK_RANGE, 0, 1) == -1) {        
           msSetError(MS_SYMERR, "ANCHORPOINT must be between 0 and 1", "loadSymbol()");
           return(-1);
-        }
+	}
         break;
+
       case(ANTIALIAS): /*ignore*/
         msyylex();
         break;
@@ -252,7 +249,7 @@ int loadSymbol(symbolObj *s, char *symbolpath)
               break;
             case(MS_NUMBER):
               s->points[s->numpoints].x = atof(msyystring_buffer); /* grab the x */
-              if(getDouble(&(s->points[s->numpoints].y)) == -1) return(-1); /* grab the y */
+              if(getDouble(&(s->points[s->numpoints].y), MS_NUM_CHECK_NONE, -1, -1) == -1) return(-1); /* grab the y */
               if(s->points[s->numpoints].x!=-99) {
                 s->sizex = MS_MAX(s->sizex, s->points[s->numpoints].x);
                 s->sizey = MS_MAX(s->sizey, s->points[s->numpoints].y);
@@ -270,7 +267,7 @@ int loadSymbol(symbolObj *s, char *symbolpath)
         break;
       case(TRANSPARENT):
         s->transparent = MS_TRUE;
-        if(getInteger(&(s->transparentcolor)) == -1) return(-1);
+        if(getInteger(&(s->transparentcolor), MS_NUM_CHECK_RANGE, 0, 255) == -1) return(-1);
         break;
       case(TYPE):
         if((s->type = getSymbol(8,MS_SYMBOL_VECTOR,MS_SYMBOL_ELLIPSE,MS_SYMBOL_PIXMAP,MS_SYMBOL_SIMPLE,MS_TRUETYPE,MS_SYMBOL_HATCH,MS_SYMBOL_SVG)) == -1)
@@ -403,7 +400,7 @@ int msAddImageSymbol(symbolSetObj *symbolset, char *filename)
           unlink(tmpfullfilename); 
           msFree(tmpfilename);
           msFree(tmppath);
-          return MS_FAILURE;
+          return -1;
         }
       }
       msFree(tmpfilename);
@@ -460,13 +457,14 @@ void msInitSymbolSet(symbolSetObj *symbolset)
   /* Alloc symbol[] array and ensure there is at least 1 symbol:
    * symbol 0 which is the default symbol with all default params.
    */
-  if (msGrowSymbolSet(symbolset) == NULL)
+  symbolObj* symbol = msGrowSymbolSet(symbolset);
+  if (symbol == NULL)
     return; /* alloc failed */
-  symbolset->symbol[0]->type = MS_SYMBOL_ELLIPSE;
-  symbolset->symbol[0]->filled = MS_TRUE;
-  symbolset->symbol[0]->numpoints = 1;
-  symbolset->symbol[0]->points[0].x = 1;
-  symbolset->symbol[0]->points[0].y = 1;
+  symbol->type = MS_SYMBOL_ELLIPSE;
+  symbol->filled = MS_TRUE;
+  symbol->numpoints = 1;
+  symbol->points[0].x = 1;
+  symbol->points[0].y = 1;
 
   /* Just increment numsymbols to reserve symbol 0.
    * initSymbol() has already been called
@@ -641,17 +639,15 @@ int msGetCharacterSize(mapObj *map, char* font, int size, char *character, rectO
   unsigned int unicode, codepoint;
   glyph_element *glyph;
   face_element *face = msGetFontFace(font, &map->fontset);
-  if(UNLIKELY(!face)) return MS_FAILURE;
+  if(MS_UNLIKELY(!face)) return MS_FAILURE;
   msUTF8ToUniChar(character, &unicode);
   codepoint = msGetGlyphIndex(face,unicode);
   glyph = msGetGlyphByIndex(face,size,codepoint);
-  if(UNLIKELY(!glyph)) return MS_FAILURE;
-  if(glyph) {
-    r->minx = glyph->metrics.minx;
-    r->maxx = glyph->metrics.maxx;
-    r->miny = - glyph->metrics.maxy;
-    r->maxy = - glyph->metrics.miny;
-  }
+  if(MS_UNLIKELY(!glyph)) return MS_FAILURE;
+  r->minx = glyph->metrics.minx;
+  r->maxx = glyph->metrics.maxx;
+  r->miny = - glyph->metrics.maxy;
+  r->maxy = - glyph->metrics.miny;
   return MS_SUCCESS;
 }
 
@@ -699,7 +695,7 @@ int msGetMarkerSize(mapObj *map, styleObj *style, double *width, double *height,
 
     case(MS_SYMBOL_TRUETYPE): {
       rectObj gbounds;
-      if(UNLIKELY(MS_FAILURE == msGetCharacterSize(map,symbol->font,size,symbol->character, &gbounds)))
+      if(MS_UNLIKELY(MS_FAILURE == msGetCharacterSize(map,symbol->font,size,symbol->character, &gbounds)))
         return MS_FAILURE;
 
       *width = MS_MAX(*width, (gbounds.maxx-gbounds.minx));
@@ -926,7 +922,7 @@ int msPreloadImageSymbol(rendererVTableObj *renderer, symbolObj *symbol)
  * gdImageCreate(), gdImageCopy()                                      *
  **********************************************************************/
 
-int msCopySymbol(symbolObj *dst, symbolObj *src, mapObj *map)
+int msCopySymbol(symbolObj *dst, const symbolObj *src, mapObj *map)
 {
   int i;
 
@@ -967,7 +963,7 @@ int msCopySymbol(symbolObj *dst, symbolObj *src, mapObj *map)
  * Copy a symbolSetObj using msCopyFontSet(), msCopySymbol()           *
  **********************************************************************/
 
-int msCopySymbolSet(symbolSetObj *dst, symbolSetObj *src, mapObj *map)
+int msCopySymbolSet(symbolSetObj *dst, const symbolSetObj *src, mapObj *map)
 {
   int i, return_value;
 

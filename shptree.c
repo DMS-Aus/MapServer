@@ -44,7 +44,7 @@ char* AddFileSuffix ( const char * Filename, const char * Suffix )
   /* -------------------------------------------------------------------- */
   pszBasename = (char *) msSmallMalloc(strlen(Filename)+5);
   strcpy( pszBasename, Filename );
-  for( i = strlen(pszBasename)-1;
+  for( i = (int)strlen(pszBasename)-1;
        i > 0 && pszBasename[i] != '.' && pszBasename[i] != '/'
        && pszBasename[i] != '\\';
        i-- ) {}
@@ -82,6 +82,7 @@ int main(int argc, char *argv[])
   /*    index format                                                      */
   /* -------------------------------------------------------------------- */
   i = 1;
+  /* cppcheck-suppress knownConditionTrueFalse */
   if( *((uchar *) &i) == 1 )
     byte_order = MS_NEW_LSB_ORDER;
   else

@@ -18,17 +18,18 @@ LAYER
 DEBUG 5
   NAME shppoly
   TYPE polygon
-  DUMP TRUE
   TEMPLATE "junk.tmpl"
   CONNECTIONTYPE OGR
-  CONNECTION "data/shppoly"
+  CONNECTION "data/shppoly/poly.shp"
   DATA "poly"
   STATUS default
   CLASSITEM "AREA"
   CLASS
     NAME "test1"
-    COLOR 0 255 0
-    OUTLINECOLOR 255 0 0
+    STYLE
+        COLOR 0 255 0
+        OUTLINECOLOR 255 0 0
+    END
   END
 END
 

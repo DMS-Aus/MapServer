@@ -33,6 +33,8 @@
 #include "mapthread.h"
 #include "maptime.h"
 
+#include "cpl_conv.h"
+
 #include <time.h>
 #ifndef _WIN32
 #include <sys/time.h>
@@ -101,7 +103,7 @@ debugInfoObj *msGetDebugInfoObj()
   }
 
   /* If the link is not already at the head of the list, promote it */
-  else if( link != NULL && link->next != NULL ) {
+  else {
     debugInfoObj *target = link->next;
 
     link->next = link->next->next;
@@ -262,12 +264,12 @@ int msDebugInitFromEnv()
 {
   const char *val;
 
-  if( (val=getenv( "MS_ERRORFILE" )) != NULL ) {
+  if( (val=CPLGetConfigOption("MS_ERRORFILE", NULL)) != NULL ) {
     if ( msSetErrorFile(val, NULL) != MS_SUCCESS )
       return MS_FAILURE;
   }
 
-  if( (val=getenv( "MS_DEBUGLEVEL" )) != NULL )
+  if( (val=CPLGetConfigOption("MS_DEBUGLEVEL", NULL)) != NULL )
     msSetGlobalDebugLevel(atoi(val));
 
   return MS_SUCCESS;
@@ -374,4 +376,5 @@ void msDebug( const char * pszFormat, ... )
 */
 void msDebug2( int level, ... )
 {
+    (void)level;
 }

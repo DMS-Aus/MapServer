@@ -1,4 +1,4 @@
-cmake_minimum_required (VERSION 2.6)
+cmake_minimum_required(VERSION 3.0...3.23)
 
 project (MapServer)
 
@@ -14,11 +14,28 @@ include(CheckFunctionExists)
 include(CheckIncludeFile)
 include(CheckCSourceCompiles)
 
-
-set (MapServer_VERSION_MAJOR 7)
-set (MapServer_VERSION_MINOR 4)
-set (MapServer_VERSION_REVISION 5)
+set (MapServer_VERSION_MAJOR 8)
+set (MapServer_VERSION_MINOR 0)
+set (MapServer_VERSION_REVISION 0)
 set (MapServer_VERSION_SUFFIX "")
+
+# Set C++ version
+# Make CMAKE_CXX_STANDARD available as cache option overridable by user
+set(CMAKE_CXX_STANDARD 11
+  CACHE STRING "C++ standard version to use (default is 11)")
+message(STATUS "Requiring C++${CMAKE_CXX_STANDARD}")
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+message(STATUS "Requiring C++${CMAKE_CXX_STANDARD} - done")
+
+# Set C99 version
+# Make CMAKE_C_STANDARD available as cache option overridable by user
+set(CMAKE_C_STANDARD 99
+  CACHE STRING "C standard version to use (default is 99)")
+message(STATUS "Requiring C${CMAKE_C_STANDARD}")
+set(CMAKE_C_STANDARD_REQUIRED ON)
+set(CMAKE_C_EXTENSIONS OFF)
+message(STATUS "Requiring C${CMAKE_C_STANDARD} - done")
 
 set(TARGET_VERSION_MAJOR ${MapServer_VERSION_MAJOR})
 set(TARGET_VERSION_MINOR ${MapServer_VERSION_MINOR})
@@ -33,9 +50,11 @@ endif(MapServer_IS_DEV_VERSION)
 MATH(EXPR MapServer_VERSION_NUM "${MapServer_VERSION_MAJOR}*10000+${MapServer_VERSION_MINOR}*100+${MapServer_VERSION_REVISION}")
 
 SET(CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake ${CMAKE_MODULE_PATH})
-
-# Add custom function to check Python modules are installed
-include(FindPythonModule)
+foreach(_version IN ITEMS 3.20)
+    if(CMAKE_VERSION VERSION_LESS "${_version}")
+        list(INSERT CMAKE_MODULE_PATH 0 "${PROJECT_SOURCE_DIR}/cmake/${_version}")
+    endif()
+endforeach()
 
 if (APPLE)
   set(CMAKE_FIND_FRAMEWORK "LAST")
@@ -119,11 +138,10 @@ int main(int argc, char **argv) {
 include_directories(${CMAKE_CURRENT_BINARY_DIR})
 
 #options suported by the cmake builder
-option(WITH_PROJ "Choose if reprojection support should be built in" ON)
 option(WITH_PROTOBUFC "Choose if protocol buffers support should be built in (required for vector tiles)" ON)
 option(WITH_KML "Enable native KML output support (requires libxml2 support)" OFF)
 option(WITH_SOS "Enable SOS Server support (requires PROJ and libxml2 support)" OFF)
-option(WITH_WMS "Enable WMS Server support (requires proj support)" ON)
+option(WITH_WMS "Enable WMS Server support (requires PROJ support)" ON)
 option(WITH_FRIBIDI "Choose if FriBidi glyph shaping support should be built in (usefull for right-to-left languages) (requires HARFBUZZ)" ON)
 option(WITH_HARFBUZZ "Choose if Harfbuzz complex text layout should be included (needed for e.g. arabic and hindi) (requires FRIBIDI)" ON)
 option(WITH_ICONV "Choose if Iconv Internationalization support should be built in" ON)
@@ -134,24 +152,21 @@ option(WITH_MYSQL "Choose if MYSQL joining support should be built in" OFF)
 option(WITH_FCGI "Choose if FastCGI support should be built in" ON)
 option(WITH_GEOS "Choose if GEOS geometry operations support should be built in" ON)
 option(WITH_POSTGIS "Choose if Postgis input support should be built in" ON)
-option(WITH_GDAL "Choose if GDAL input raster support should be built in" ON)
-option(WITH_OGR "Choose if OGR/GDAL input vector support should be built in" ON)
-option(WITH_CLIENT_WMS "Enable Client WMS Layer support (requires CURL and GDAL support)" OFF)
-option(WITH_CLIENT_WFS "Enable Client WMS Layer support (requires CURL and OGR support)" OFF)
+option(WITH_CLIENT_WMS "Enable Client WMS Layer support (requires CURL)" OFF)
+option(WITH_CLIENT_WFS "Enable Client WMS Layer support (requires CURL)" OFF)
 option(WITH_CURL "Enable Curl HTTP support (required for wms/wfs client, and remote SLD)" OFF)
 option(WITH_WFS "Enable WFS Server support (requires PROJ and OGR support)" ON)
 option(WITH_WCS "Enable WCS Server support (requires PROJ and GDAL support)" ON)
+option(WITH_OGCAPI "Enable OGCAPI Server support (requires PROJ and OGR support)" ON)
 option(WITH_LIBXML2 "Choose if libxml2 support should be built in (used for sos, wcs 1.1,2.0 and wfs 1.1)" ON)
 option(WITH_THREAD_SAFETY "Choose if a thread-safe version of libmapserver should be built (only recommended for some mapscripts)" OFF)
 option(WITH_GIF "Enable GIF support (for PIXMAP loading)" ON)
 option(WITH_PYTHON "Enable Python mapscript support" OFF)
-option(WITH_PHP "Enable PHP mapscript support" OFF)
 option(WITH_PHPNG "Enable PHPNG (SWIG) mapscript support" OFF)
 option(WITH_PERL "Enable Perl mapscript support" OFF)
 option(WITH_RUBY "Enable Ruby mapscript support" OFF)
 option(WITH_JAVA "Enable Java mapscript support" OFF)
 option(WITH_CSHARP "Enable C# mapscript support" OFF)
-option(WITH_POINT_Z_M "include Z and M coordinates in point structure (advanced, not recommended)" OFF)
 option(WITH_ORACLESPATIAL "include oracle spatial database input support" OFF)
 option(WITH_ORACLE_PLUGIN "include oracle spatial database input support as plugin" OFF)
 option(WITH_MSSQL2008 "include mssql 2008 database input support as plugin" OFF)
@@ -164,15 +179,28 @@ option(BUILD_STATIC "Also build a static version of mapserver" OFF)
 option(LINK_STATIC_LIBMAPSERVER "Link to static version of libmapserver (also for mapscripts)" OFF)
 option(WITH_APACHE_MODULE "include (experimental) support for apache module" OFF)
 option(WITH_GENERIC_NINT "generic rounding" OFF)
+option(WITH_PYMAPSCRIPT_ANNOTATIONS "Add annotations to Python mapscript output" OFF)
+
+option(FUZZER "Build fuzzers using libFuzzer" OFF)
+mark_as_advanced(FUZZER)
 
 #TODO: USE_OGL? , USE_SDE, USE_CLUSTER_EXTERNAL USE_CLUSTER_PLUGIN, USE_MSSQL2008, USE_MSSQL2008_PLUGIN
 # SIGNORE_MISSING_DATA, CGI_CL_DEBUG_ARGS, EXTRA DEBUG FLAGS?,
 # PERLV_ld_DETECT?
 
 # Add compiler flags for warnings
-if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_COMPILER_IS_GNUCC)
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Werror=format-security -Wdeclaration-after-statement")
+if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_COMPILER_IS_GNUCC OR CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Werror=format-security")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Werror=format-security")
+endif()
+
+if(FUZZER)
+    if (NOT CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+        message(FATAL_ERROR "Need clang for libFuzzer support")
+    endif()
+
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize=fuzzer,address -DFUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=fuzzer,address -DFUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION")
 endif()
 
 if(NOT DEFINED CMAKE_INSTALL_LIBDIR)
@@ -237,6 +265,14 @@ set(v8_SOURCES
 )
 include_directories(mapscript/v8/)
 
+# point to FlatGeobuf files
+set(flatgeobuf_SOURCES
+flatgeobuf/flatgeobuf_c.cpp
+flatgeobuf/geometryreader.cpp
+flatgeobuf/packedrtree.cpp
+)
+include_directories(flatgeobuf/include)
+
 #add_definitions(-DHASH_DEBUG=1)
 if(WIN32)
   set(REGEX_SOURCES ${REGEX_DIR}/regex.c)
@@ -246,38 +282,42 @@ if(WIN32)
   set(REGEX_MALLOC 1)
   set(USE_GENERIC_MS_NINT 1)
   set(HAVE_STRING_H 0)
+  # Suppress warnings for regex.c
+  set_source_files_properties(${REGEX_SOURCES} PROPERTIES COMPILE_FLAGS /w)
 else(WIN32)
   set(REGEX_SOURCES "")
 endif(WIN32)
 
 set(mapserver_SOURCES fontcache.c 
-cgiutil.c mapgeos.c maporaclespatial.c mapsearch.c mapwms.c classobject.c
-mapgml.c mapoutput.c mapwmslayer.c layerobject.c mapgraticule.c mapows.c
+cgiutil.c mapgeos.c maporaclespatial.c mapsearch.c mapwms.cpp classobject.c
+mapgml.c mapoutput.c mapwmslayer.c layerobject.c mapgraticule.c mapows.c mapogcapi.cpp
 mapservutil.c mapxbase.c maphash.c mapowscommon.c mapshape.c mapxml.c mapbits.c
-maphttp.c mapparser.c mapstring.c mapxmp.c mapcairo.c mapimageio.c
+maphttp.c mapparser.c mapstring.cpp mapxmp.c mapcairo.c mapimageio.c
 mappluginlayer.c mapsymbol.c mapchart.c mapimagemap.c mappool.c maptclutf.c
-mapcluster.c mapio.c mappostgis.c maptemplate.c mapcontext.c mapjoin.c
+mapcluster.c mapio.c mappostgis.cpp maptemplate.c mapcontext.c mapjoin.c
 mappostgresql.c mapthread.c mapcopy.c maplabel.c mapprimitive.c maptile.c
 mapcpl.c maplayer.c mapproject.c maptime.c mapcrypto.c maplegend.c hittest.c
-mapprojhack.c maptree.c mapdebug.c maplexer.c mapquantization.c mapunion.c
+maptree.c mapdebug.c maplexer.c mapquantization.c mapunion.cpp
 mapdraw.c maplibxml2.c mapquery.c maputil.c strptime.c mapdrawgdal.c
 mapraster.c mapuvraster.c mapdummyrenderer.c mapobject.c maprasterquery.c
-mapwcs.c maperror.c mapogcfilter.c mapregex.c mapwcs11.c mapfile.c
-mapogcfiltercommon.c maprendering.c mapwcs20.c mapogcsld.c mapmetadata.c
-mapresample.c mapwfs.c mapgdal.c mapogcsos.c mapscale.c mapwfs11.c mapwfs20.c
-mapgeomtransform.c mapogroutput.c mapwfslayer.c mapagg.cpp mapkml.cpp
+mapwcs.cpp maperror.c mapogcfilter.cpp mapregex.c mapwcs11.cpp mapfile.c
+mapogcfiltercommon.cpp maprendering.c mapwcs20.cpp mapogcsld.c mapmetadata.c
+mapresample.c mapwfs.cpp mapgdal.cpp mapogcsos.c mapscale.c mapwfs11.cpp mapwfs20.c
+mapgeomtransform.c mapogroutput.cpp mapwfslayer.c mapagg.cpp mapkml.cpp
 mapgeomutil.cpp mapkmlrenderer.cpp fontcache.c textlayout.c maputfgrid.cpp
-mapogr.cpp mapcontour.c mapsmoothing.c mapv8.cpp ${REGEX_SOURCES} kerneldensity.c 
-mapcompositingfilter.c mapmvt.c)
+mapogr.cpp mapcontour.c mapsmoothing.c mapv8.cpp ${REGEX_SOURCES} kerneldensity.c
+idw.c interpolation.c mapflatgeobuf.c mapcompositingfilter.c mapmvt.c mapiconv.c
+mapgraph.cpp mapserv-config.cpp)
 
 set(mapserver_HEADERS
 cgiutil.h dejavu-sans-condensed.h dxfcolor.h fontcache.h hittest.h mapagg.h
 mapaxisorder.h mapcopy.h mapentities.h maperror.h mapfile.h mapgml.h maphash.h
 maphttp.h mapio.h mapkmlrenderer.h maplibxml2.h mapogcfilter.h mapogcsld.h
-mapoglcontext.h mapoglrenderer.h mapowscommon.h mapows.h mapparser.h
+mapoglcontext.h mapoglrenderer.h mapowscommon.h mapows.h mapparser.h mapogcapi.h
 mappostgis.h mapprimitive.h mapproject.h mapraster.h mapregex.h mapresample.h
 mapserver-api.h mapserver.h mapserv.h mapshape.h mapsymbol.h maptemplate.h
-mapthread.h maptile.h maptime.h maptree.h maputfgrid.h mapwcs.h uthash.h)
+mapthread.h maptile.h maptime.h maptree.h maputfgrid.h mapwcs.h uthash.h mapiconv.h
+mapflatgeobuf.h mapgraph.h mapserv-config.h)
 
 if(WIN32)
 	configure_file(
@@ -311,7 +351,7 @@ endif (WITH_PROTOBUFC)
 
 
 if(BUILD_DYNAMIC)
-  add_library(mapserver SHARED ${vectortile_SOURCES} ${mapserver_SOURCES} ${agg_SOURCES} ${v8_SOURCES})
+  add_library(mapserver SHARED ${vectortile_SOURCES} ${mapserver_SOURCES} ${agg_SOURCES} ${v8_SOURCES} ${flatgeobuf_SOURCES})
   set_target_properties( mapserver  PROPERTIES
     VERSION ${MapServer_VERSION_STRING}
     SOVERSION 2
@@ -319,7 +359,7 @@ if(BUILD_DYNAMIC)
 endif(BUILD_DYNAMIC)
 
 if(BUILD_STATIC)
-  add_library(mapserver_static STATIC ${vectortile_SOURCES} ${mapserver_SOURCES} ${agg_SOURCES} ${v8_SOURCES})
+  add_library(mapserver_static STATIC ${vectortile_SOURCES} ${mapserver_SOURCES} ${agg_SOURCES} ${v8_SOURCES} ${flatgeobuf_SOURCES})
   set_target_properties( mapserver_static PROPERTIES
     VERSION ${MapServer_VERSION_STRING}
     SOVERSION 2
@@ -335,10 +375,12 @@ endif(BUILD_STATIC)
 
 add_executable(mapserv mapserv.c)
 target_link_libraries(mapserv ${MAPSERVER_LIBMAPSERVER})
-add_executable(shp2img shp2img.c)
-target_link_libraries(shp2img ${MAPSERVER_LIBMAPSERVER})
+add_executable(map2img map2img.c)
+target_link_libraries(map2img ${MAPSERVER_LIBMAPSERVER})
 add_executable(shptree shptree.c)
 target_link_libraries(shptree ${MAPSERVER_LIBMAPSERVER})
+add_executable(coshp coshp.c)
+target_link_libraries(coshp ${MAPSERVER_LIBMAPSERVER})
 add_executable(shptreevis shptreevis.c)
 target_link_libraries(shptreevis ${MAPSERVER_LIBMAPSERVER})
 add_executable(sortshp sortshp.c)
@@ -388,17 +430,14 @@ ms_link_libraries( ${FREETYPE_LIBRARY})
 list(APPEND ALL_INCLUDE_DIRS ${FREETYPE_INCLUDE_DIR})
 
 
-if(WITH_PROJ)
-  find_package(Proj)
-  if(NOT PROJ_FOUND)
-    report_optional_not_found(PROJ)
- else(NOT PROJ_FOUND)
-    include_directories(${PROJ_INCLUDE_DIR})
-    ms_link_libraries( ${PROJ_LIBRARY})
-    list(APPEND ALL_INCLUDE_DIRS ${PROJ_INCLUDE_DIR})
-    set (USE_PROJ 1)
- endif(NOT PROJ_FOUND)
-endif (WITH_PROJ)
+find_package(Proj)
+if(NOT PROJ_FOUND)
+    report_mandatory_not_found(PROJ)
+endif(NOT PROJ_FOUND)
+
+include_directories(${PROJ_INCLUDE_DIR})
+ms_link_libraries( ${PROJ_LIBRARY})
+list(APPEND ALL_INCLUDE_DIRS ${PROJ_INCLUDE_DIR})
 
 if(USE_PBF)
     include_directories(${PROJECT_BINARY_DIR}/renderers/mvt)
@@ -407,7 +446,7 @@ if(USE_PBF)
 endif()
 
 if(WITH_PIXMAN)
-  find_package(Pixman)
+  find_package(PIXMAN)
   if(PIXMAN_FOUND)
     include_directories(${PIXMAN_INCLUDE_DIR})
     ms_link_libraries(${PIXMAN_LIBRARY})
@@ -419,11 +458,7 @@ if(WITH_PIXMAN)
 endif (WITH_PIXMAN)
 
 if(WITH_WMS)
-  if(USE_PROJ)
-    set(USE_WMS_SVR 1)
-  else(USE_PROJ)
-    report_dependency_error(WMS PROJ)
-  endif(USE_PROJ)
+  set(USE_WMS_SVR 1)
 endif(WITH_WMS)
 
 if(WITH_FRIBIDI)
@@ -510,7 +545,7 @@ if(WITH_ORACLESPATIAL OR WITH_ORACLE_PLUGIN)
   if(NOT DEFINED ENV{ORACLE_HOME})
     MESSAGE( SEND_ERROR "ORACLE_HOME environment variable not set, needed for detection")
   endif()
-  find_package(Oracle)
+  find_package(ORACLE)
   if(ORACLE_FOUND)
     include_directories(${ORACLE_INCLUDE_DIR})
     list(APPEND ALL_INCLUDE_DIRS ${ORACLE_INCLUDE_DIR})
@@ -536,7 +571,6 @@ endif(ORACLE_FOUND AND WITH_ORACLE_PLUGIN)
 if(WITH_MSSQL2008)
   find_package(ODBC)
   if(ODBC_FOUND)
-    include_directories(${ODBC_INCLUDE_DIR})
 	add_library(msplugin_mssql2008 MODULE mapmssql2008.c)
 	target_link_libraries(msplugin_mssql2008 ${ODBC_LIBRARY} ${MAPSERVER_LIBMAPSERVER})
     set_target_properties(msplugin_mssql2008 PROPERTIES COMPILE_FLAGS "-DUSE_MSSQL2008_PLUGIN -DUSE_MSSQL2008")
@@ -573,6 +607,12 @@ endif (WITH_GEOS)
 
 if(WITH_POSTGIS)
   find_package(PostgreSQL)
+
+  # map new module variables to uppercase variables
+  set (POSTGRESQL_FOUND ${PostgreSQL_FOUND})
+  set (POSTGRESQL_LIBRARY ${PostgreSQL_LIBRARIES})
+  set (POSTGRESQL_INCLUDE_DIR ${PostgreSQL_INCLUDE_DIRS})
+
   if(POSTGRESQL_FOUND)
     #uppercase our variables
     if ( NOT DEFINED POSTGRESQL_LIBRARY )
@@ -591,17 +631,14 @@ if(WITH_POSTGIS)
   endif(POSTGRESQL_FOUND)
 endif (WITH_POSTGIS)
 
-if(WITH_GDAL)
-  find_package(GDAL)
-  if(GDAL_FOUND)
-    include_directories(${GDAL_INCLUDE_DIR})
-    ms_link_libraries( ${GDAL_LIBRARY})
-    list(APPEND ALL_INCLUDE_DIRS ${GDAL_INCLUDE_DIR})
-    set (USE_GDAL 1)
-  else(GDAL_FOUND)
-    report_optional_not_found(GDAL)
-  endif(GDAL_FOUND)
-endif (WITH_GDAL)
+find_package(GDAL)
+if(NOT GDAL_FOUND)
+  report_mandatory_not_found(GDAL)
+endif(NOT GDAL_FOUND)
+
+include_directories(${GDAL_INCLUDE_DIR})
+ms_link_libraries( ${GDAL_LIBRARY})
+list(APPEND ALL_INCLUDE_DIRS ${GDAL_INCLUDE_DIR})
 
 if(WITH_SVGCAIRO)
   if(WITH_RSVG)
@@ -636,25 +673,6 @@ if(WITH_RSVG)
   endif(RSVG_FOUND AND GOBJECT_FOUND)
 endif (WITH_RSVG)
 
-if(WITH_OGR)
-  if(GDAL_FOUND)
-    set (USE_OGR 1)
-  else(GDAL_FOUND)
-    find_package(GDAL)
-    if(GDAL_FOUND)
-      include_directories(${GDAL_INCLUDE_DIR})
-      ms_link_libraries( ${GDAL_LIBRARY})
-      list(APPEND ALL_INCLUDE_DIRS ${GDAL_INCLUDE_DIR})
-      set (USE_OGR 1)
-    else(GDAL_FOUND)
-      message(SEND_ERROR "GDAL library could not be found and is needed for OGR support.
-      HINTS:
-      - disable OGR support by adding -DWITH_OGR=0
-      - add the GDAL install directory to the CMAKE_PREFIX_PATH variable (-DCMAKE_PREFIX_PATH=\"/path/to/${component}-install-dir;/path/to/other/dirs\"")
-    endif(GDAL_FOUND)
-  endif(GDAL_FOUND)
-endif(WITH_OGR)
-
 if(WITH_CLIENT_WMS OR WITH_CLIENT_WFS)
    set(WITH_CURL ON)
 endif(WITH_CLIENT_WMS OR WITH_CLIENT_WFS)
@@ -683,57 +701,24 @@ if(WITH_CLIENT_WMS OR WITH_CLIENT_WFS)
 endif(WITH_CLIENT_WMS OR WITH_CLIENT_WFS)
 
 if(WITH_CLIENT_WMS)
-  if(USE_GDAL AND USE_PROJ)
-    set(USE_WMS_LYR 1)
-  else(USE_GDAL AND USE_PROJ)
-    if(NOT USE_GDAL)
-      report_dependency_error(CLIENT_WMS GDAL)
-    endif(NOT USE_GDAL)
-    if( NOT USE_PROJ)
-      report_dependency_error(CLIENT_WMS PROJ)
-    endif(NOT USE_PROJ)
-  endif(USE_GDAL AND USE_PROJ)
+  set(USE_WMS_LYR 1)
 endif(WITH_CLIENT_WMS)
 
 if(WITH_CLIENT_WFS)
-  if(USE_OGR AND USE_PROJ)
-    set(USE_WFS_LYR 1)
-  else(USE_OGR AND USE_PROJ)
-    if(NOT USE_OGR)
-      report_dependency_error(CLIENT_WFS OGR)
-    endif(NOT USE_OGR)
-    if( NOT USE_PROJ)
-      report_dependency_error(CLIENT_WFS PROJ)
-    endif(NOT USE_PROJ)
-  endif(USE_OGR AND USE_PROJ)
+  set(USE_WFS_LYR 1)
 endif(WITH_CLIENT_WFS)
 
 if(WITH_WFS)
-  if(USE_PROJ AND USE_OGR)
-    set(USE_WFS_SVR 1)
-    #TODO: set WFS_USE_LIBXML2 ?
-  else(USE_PROJ AND USE_OGR)
-    if( NOT USE_OGR)
-      report_dependency_error(WFS OGR)
-    endif( NOT USE_OGR)
-    if( NOT USE_PROJ)
-      report_dependency_error(WFS PROJ)
-    endif( NOT USE_PROJ)
-  endif(USE_PROJ AND USE_OGR)
+  set(USE_WFS_SVR 1)
 endif(WITH_WFS)
 
 if(WITH_WCS)
-  if(USE_PROJ AND USE_GDAL)
-    set(USE_WCS_SVR 1)
-  else(USE_PROJ AND USE_GDAL)
-    if(NOT USE_GDAL)
-      report_dependency_error(WCS GDAL)
-    endif(NOT USE_GDAL)
-    if(NOT USE_PROJ)
-      report_dependency_error(WCS PROJ)
-    endif(NOT USE_PROJ)
-  endif(USE_PROJ AND USE_GDAL)
+  set(USE_WCS_SVR 1)
 endif(WITH_WCS)
+
+if(WITH_OGCAPI)
+  set(USE_OGCAPI_SVR 1)
+endif(WITH_OGCAPI)
 
 if(WITH_LIBXML2)
   find_package(LibXml2)
@@ -758,25 +743,12 @@ if( USE_WFS_SVR AND NOT USE_LIBXML2 )
 endif( USE_WFS_SVR AND NOT USE_LIBXML2 )
 
 if(WITH_SOS)
-    if(NOT USE_OGR)
-      report_dependency_error(WITH_SOS OGR)
-    endif(NOT USE_OGR)
-
-  if(USE_PROJ AND USE_LIBXML2)
+  if(USE_LIBXML2)
     set(USE_SOS_SVR 1)
-  else(USE_PROJ AND USE_LIBXML2)
-    if(NOT USE_LIBXML2)
-      report_dependency_error(SOS LIBXML2)
-    endif(NOT USE_LIBXML2)
-    if(NOT USE_PROJ)
-      report_dependency_error(SOS PROJ)
-    endif(NOT USE_PROJ)
-  endif(USE_PROJ AND USE_LIBXML2)
+  else(USE_LIBXML2)
+    report_dependency_error(SOS LIBXML2)
+  endif(USE_LIBXML2)
 endif(WITH_SOS)
-
-if(WITH_POINT_Z_M)
-  set(USE_POINT_Z_M 1)
-endif(WITH_POINT_Z_M)
 
 if(WITH_KML)
   if(USE_LIBXML2)
@@ -833,14 +805,14 @@ endif(WITH_GIF)
 
 if(WITH_EXEMPI)
   find_package(Exempi)
-  if(LIBEXEMPI_FOUND)
+  if(EXEMPI_FOUND)
     include_directories(${LIBEXEMPI_INCLUDE_DIR})
     ms_link_libraries( ${LIBEXEMPI_LIBRARY})
     list(APPEND ALL_INCLUDE_DIRS ${LIBEXEMPI_INCLUDE_DIR})
     set(USE_EXEMPI 1)
-  else(LIBEXEMPI_FOUND)
+  else(EXEMPI_FOUND)
     report_optional_not_found(EXEMPI)
-  endif(LIBEXEMPI_FOUND)
+  endif(EXEMPI_FOUND)
 endif(WITH_EXEMPI)
 
 if(WITH_PYTHON)
@@ -864,11 +836,6 @@ if(WITH_V8)
   ENDIF()
 ENDIF(WITH_V8)
 
-if(WITH_PHP)
-   add_subdirectory("mapscript/php")
-   set(USE_PHP_MAPSCRIPT 1)
-endif(WITH_PHP)
-
 if(WITH_PHPNG)
    add_subdirectory("mapscript/phpng")
    set(USE_PHPNG_MAPSCRIPT 1)
@@ -878,7 +845,6 @@ if(WITH_APACHE_MODULE)
    add_subdirectory("apache")
    set(USE_APACHE_MODULE 1)
 endif(WITH_APACHE_MODULE)
-
 
 if(WITH_PERL)
    add_subdirectory("mapscript/perl")
@@ -900,14 +866,19 @@ if(WITH_CSHARP)
    set(USE_CSHARP_MAPSCRIPT 1)
 endif(WITH_CSHARP)
 
+if(FUZZER)
+  add_subdirectory("fuzzers")
+endif(FUZZER)
+
 if(UNIX)
 ms_link_libraries( ${CMAKE_DL_LIBS} m )
 endif(UNIX)
 
 if (WIN32)
-    ms_link_libraries( ${MS_EXTERNAL_LIBS} ws2_32.lib)
+    ms_link_libraries( ${MS_EXTERNAL_LIBS} ws2_32.lib )
     if (MSVC)
-        set_target_properties(mapserver PROPERTIES COMPILE_FLAGS "/wd4267 /wd4244 /wd4018")
+        #4701 : Potentially uninitialized local variable 'name' used (https://docs.microsoft.com/en-us/cpp/error-messages/compiler-warnings/compiler-warning-level-4-c4701)
+        set_target_properties(mapserver PROPERTIES COMPILE_FLAGS "/EHsc /wd4267 /wd4244 /wd4018 /w14701")
     endif(MSVC)
 endif (WIN32)
 
@@ -925,7 +896,15 @@ if(BUILD_DYNAMIC)
   set_target_properties(mapserver PROPERTIES
     PUBLIC_HEADER "${mapserver_HEADERS};${PROJECT_BINARY_DIR}/mapserver-config.h;${PROJECT_BINARY_DIR}/mapserver-version.h"
   )
+
+  if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_COMPILER_IS_GNUCC OR CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+     target_compile_options(mapserver PRIVATE -Wall -Wextra -Werror=format-security)
+  endif()
 endif(BUILD_DYNAMIC)
+
+if (NOT("${LIBMAPSERVER_EXTRA_FLAGS}" STREQUAL ""))
+  set_source_files_properties(${mapserver_SOURCES} PROPERTIES COMPILE_FLAGS ${LIBMAPSERVER_EXTRA_FLAGS})
+endif()
 
 macro(status_optional_component component enabled libpath)
   if("${enabled}" EQUAL "1")
@@ -944,12 +923,12 @@ endmacro()
 
 message(STATUS "* Summary of configured options for this build")
 message(STATUS " * Mandatory components")
+message(STATUS "  * GDAL: ${GDAL_LIBRARY}")
+message(STATUS "  * PROJ: ${PROJ_LIBRARY}")
 message(STATUS "  * png: ${PNG_LIBRARY}")
 message(STATUS "  * jpeg: ${JPEG_LIBRARY}")
 message(STATUS "  * freetype: ${FREETYPE_LIBRARY}")
 message(STATUS " * Optional components")
-status_optional_component("GDAL" "${USE_GDAL}" "${GDAL_LIBRARY}")
-status_optional_component("OGR" "${USE_OGR}" "${GDAL_LIBRARY}")
 status_optional_component("GIF" "${USE_GIF}" "${GIF_LIBRARY}")
 status_optional_component("MYSQL" "${USE_MYSQL}" "${MYSQL_LIBRARY}")
 status_optional_component("FRIBIDI" "${USE_FRIBIDI}" "${FRIBIDI_LIBRARY}")
@@ -959,7 +938,6 @@ status_optional_component("CAIRO" "${USE_CAIRO}" "${CAIRO_LIBRARY}")
 status_optional_component("SVGCAIRO" "${USE_SVG_CAIRO}" "${SVGCAIRO_LIBRARY}")
 status_optional_component("RSVG" "${USE_RSVG}" "${RSVG_LIBRARY}")
 status_optional_component("CURL" "${USE_CURL}" "${CURL_LIBRARY}")
-status_optional_component("PROJ" "${USE_PROJ}" "${PROJ_LIBRARY}")
 status_optional_component("PIXMAN" "${USE_PIXMAN}" "${PIXMAN_LIBRARY}")
 status_optional_component("LIBXML2" "${USE_LIBXML2}" "${LIBXML2_LIBRARY}")
 status_optional_component("POSTGIS" "${USE_POSTGIS}" "${POSTGRESQL_LIBRARY}")
@@ -984,17 +962,16 @@ status_optional_feature("WMS SERVER" "${USE_WMS_SVR}")
 status_optional_feature("WFS SERVER" "${USE_WFS_SVR}")
 status_optional_feature("WCS SERVER" "${USE_WCS_SVR}")
 status_optional_feature("SOS SERVER" "${USE_SOS_SVR}")
+status_optional_feature("OGCAPI SERVER" "${USE_OGCAPI_SVR}")
 status_optional_feature("WMS CLIENT" "${USE_WMS_LYR}")
 status_optional_feature("WFS CLIENT" "${USE_WFS_LYR}")
 status_optional_feature("ICONV" "${USE_ICONV}")
 status_optional_feature("Thread-safety support" "${USE_THREAD}")
 status_optional_feature("KML output" "${USE_KML}")
-status_optional_feature("Z+M point coordinate support" "${USE_POINT_Z_M}")
 status_optional_feature("XML Mapfile support" "${USE_XMLMAPFILE}")
 
 message(STATUS " * Mapscripts")
 status_optional_feature("Python" "${USE_PYTHON_MAPSCRIPT}")
-status_optional_feature("PHP" "${USE_PHP_MAPSCRIPT}")
 status_optional_feature("PHPNG" "${USE_PHPNG_MAPSCRIPT}")
 status_optional_feature("PERL" "${USE_PERL_MAPSCRIPT}")
 status_optional_feature("RUBY" "${USE_RUBY_MAPSCRIPT}")
@@ -1002,8 +979,10 @@ status_optional_feature("JAVA" "${USE_JAVA_MAPSCRIPT}")
 status_optional_feature("C#" "${USE_CSHARP_MAPSCRIPT}")
 status_optional_feature("V8 Javascript" "${USE_V8_MAPSCRIPT}")
 status_optional_feature("Apache Module (Experimental)" "${USE_APACHE_MODULE}")
+status_optional_feature("Python MapScript Annotations" "${WITH_PYMAPSCRIPT_ANNOTATIONS}")
 
 message(STATUS "")
+message(STATUS "PROJECT_BINARY_DIR is set to ${PROJECT_BINARY_DIR}")
 message(STATUS "Will install files to ${CMAKE_INSTALL_PREFIX}")
 message(STATUS "Will install libraries to ${INSTALL_LIB_DIR}")
 
@@ -1026,7 +1005,7 @@ if(USE_MSSQL2008)
 endif(USE_MSSQL2008)
 
 
-INSTALL(TARGETS sortshp shptree shptreevis msencrypt legend scalebar tile4ms shptreetst shp2img mapserv
+INSTALL(TARGETS coshp sortshp shptree shptreevis msencrypt legend scalebar tile4ms shptreetst map2img mapserv
         RUNTIME DESTINATION ${INSTALL_BIN_DIR} COMPONENT bin
 )
 
@@ -1082,3 +1061,45 @@ if(BUILD_DYNAMIC)
            DESTINATION "${INSTALL_CMAKE_DIR}" COMPONENT dev
    )
 endif(BUILD_DYNAMIC)
+
+if(UNIX)
+  include(GNUInstallDirs)
+  set(DEFAULT_DATA_SUBDIR ${CMAKE_INSTALL_DATAROOTDIR}/mapserver)
+else()
+  set(DEFAULT_DATA_SUBDIR share/mapserver)
+endif()
+set(DEFAULT_CONFIG_FILE ${CMAKE_INSTALL_FULL_SYSCONFDIR}/mapserver.conf)
+
+# Locations are changeable by user to customize layout of MapServer installation
+# (default values are platform-specific)
+set(MAPSERVER_DATA_SUBDIR ${DEFAULT_DATA_SUBDIR} CACHE STRING
+  "Subdirectory where data will be installed")
+
+set(MAPSERVER_CONFIG_FILE "${DEFAULT_CONFIG_FILE}" CACHE STRING
+  "Full file name for default configuration file (mapserver.conf)")
+
+# Mark *DIR variables as advanced and dedicated to use by power-users only.
+mark_as_advanced(
+  MAPSERVER_DATA_SUBDIR
+  MAPSERVER_CONFIG_FILE
+)
+add_definitions(-DMAPSERVER_CONFIG_FILE="${MAPSERVER_CONFIG_FILE}")
+
+install(
+  FILES ${PROJECT_SOURCE_DIR}/share/ogcapi/templates/html-plain/collection.html
+        ${PROJECT_SOURCE_DIR}/share/ogcapi/templates/html-plain/collection-item.html
+        ${PROJECT_SOURCE_DIR}/share/ogcapi/templates/html-plain/collection-items.html
+        ${PROJECT_SOURCE_DIR}/share/ogcapi/templates/html-plain/collections.html
+        ${PROJECT_SOURCE_DIR}/share/ogcapi/templates/html-plain/conformance.html
+        ${PROJECT_SOURCE_DIR}/share/ogcapi/templates/html-plain/debug.html
+        ${PROJECT_SOURCE_DIR}/share/ogcapi/templates/html-plain/footer.html
+        ${PROJECT_SOURCE_DIR}/share/ogcapi/templates/html-plain/header.html
+        ${PROJECT_SOURCE_DIR}/share/ogcapi/templates/html-plain/landing.html
+        ${PROJECT_SOURCE_DIR}/share/ogcapi/templates/html-plain/openapi.html
+  DESTINATION ${MAPSERVER_DATA_SUBDIR}/ogcapi/templates/html-plain/
+)
+
+install(
+  FILES ${PROJECT_SOURCE_DIR}/etc/mapserver-sample.conf
+  DESTINATION ${CMAKE_INSTALL_FULL_SYSCONFDIR}/
+)

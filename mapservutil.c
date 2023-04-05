@@ -27,71 +27,29 @@
  * DEALINGS IN THE SOFTWARE.
  ****************************************************************************/
 
-
 #include "mapserver.h"
 #include "mapserv.h"
 #include "maptime.h"
 #include "mapows.h"
+#include "mapogcapi.h"
+
+#include "cpl_conv.h"
+
+#include "mapserver-config.h"
 
 #include "cpl_conv.h"
 
 /*
 ** Enumerated types, keep the query modes in sequence and at the end of the enumeration (mode enumeration is in maptemplate.h).
 */
-static int numModes = 23;
-static char *modeStrings[23] = {"BROWSE","ZOOMIN","ZOOMOUT","MAP","LEGEND","LEGENDICON","REFERENCE","SCALEBAR","COORDINATE",
+static const int numModes = 23;
+static char *const modeStrings[23] = {"BROWSE","ZOOMIN","ZOOMOUT","MAP","LEGEND","LEGENDICON","REFERENCE","SCALEBAR","COORDINATE",
                                 "QUERY","NQUERY","ITEMQUERY","ITEMNQUERY",
                                 "FEATUREQUERY","FEATURENQUERY","ITEMFEATUREQUERY","ITEMFEATURENQUERY",
                                 "INDEXQUERY","TILE","OWS", "WFS", "MAPLEGEND", "MAPLEGENDICON"
                                };
 
-int msCGIWriteLog(mapservObj *mapserv, int show_error)
-{
-  FILE *stream;
-  int i;
-  time_t t;
-  char szPath[MS_MAXPATHLEN];
-
-  if(!mapserv) return(MS_SUCCESS);
-  if(!mapserv->map) return(MS_SUCCESS);
-  if(!mapserv->map->web.log) return(MS_SUCCESS);
-
-  if((stream = fopen(msBuildPath(szPath, mapserv->map->mappath,
-                                 mapserv->map->web.log),"a")) == NULL) {
-    msSetError(MS_IOERR, "%s", "msCGIWriteLog()", mapserv->map->web.log);
-    return(MS_FAILURE);
-  }
-
-  t = time(NULL);
-  fprintf(stream,"%s,",msStringChop(ctime(&t)));
-  fprintf(stream,"%d,",(int)getpid());
-
-  if(getenv("REMOTE_ADDR") != NULL)
-    fprintf(stream,"%s,",getenv("REMOTE_ADDR"));
-  else
-    fprintf(stream,"NULL,");
-
-  fprintf(stream,"%s,",mapserv->map->name);
-  fprintf(stream,"%d,",mapserv->Mode);
-
-  fprintf(stream,"%f %f %f %f,", mapserv->map->extent.minx, mapserv->map->extent.miny, mapserv->map->extent.maxx, mapserv->map->extent.maxy);
-
-  fprintf(stream,"%f %f,", mapserv->mappnt.x, mapserv->mappnt.y);
-
-  for(i=0; i<mapserv->NumLayers; i++)
-    fprintf(stream, "%s ", mapserv->Layers[i]);
-  fprintf(stream,",");
-
-  if(show_error == MS_TRUE)
-    msWriteError(stream);
-  else
-    fprintf(stream, "normal execution");
-
-  fprintf(stream,"\n");
-
-  fclose(stream);
-  return(MS_SUCCESS);
-}
+static int commonLoadForm(mapservObj *mapserv, mapObj *map);
 
 void msCGIWriteError(mapservObj *mapserv)
 {
@@ -102,14 +60,14 @@ void msCGIWriteError(mapservObj *mapserv)
     return;
   }
 
-  msCGIWriteLog(mapserv,MS_TRUE);
+  const char *version = msGetVersion();
 
   if(!mapserv || !mapserv->map) {
     msIO_setHeader("Content-Type","text/html");
     msIO_sendHeaders();
     msIO_printf("<HTML>\n");
     msIO_printf("<HEAD><TITLE>MapServer Message</TITLE></HEAD>\n");
-    msIO_printf("<!-- %s -->\n", msGetVersion());
+    if(version[0] != '\0') msIO_printf("<!-- %s -->\n", version);
     msIO_printf("<BODY BGCOLOR=\"#FFFFFF\">\n");
     msWriteErrorXML(stdout);
     msIO_printf("</BODY></HTML>");
@@ -123,7 +81,7 @@ void msCGIWriteError(mapservObj *mapserv)
       msIO_sendHeaders();
       msIO_printf("<HTML>\n");
       msIO_printf("<HEAD><TITLE>MapServer Message</TITLE></HEAD>\n");
-      msIO_printf("<!-- %s -->\n", msGetVersion());
+      if(version[0] != '\0') msIO_printf("<!-- %s -->\n", version);
       msIO_printf("<BODY BGCOLOR=\"#FFFFFF\">\n");
       msWriteErrorXML(stdout);
       msIO_printf("</BODY></HTML>");
@@ -136,7 +94,7 @@ void msCGIWriteError(mapservObj *mapserv)
         msIO_sendHeaders();
         msIO_printf("<HTML>\n");
         msIO_printf("<HEAD><TITLE>MapServer Message</TITLE></HEAD>\n");
-        msIO_printf("<!-- %s -->\n", msGetVersion());
+        if(version[0] != '\0') msIO_printf("<!-- %s -->\n", version);
         msIO_printf("<BODY BGCOLOR=\"#FFFFFF\">\n");
         msWriteErrorXML(stdout);
         msIO_printf("</BODY></HTML>");
@@ -146,7 +104,7 @@ void msCGIWriteError(mapservObj *mapserv)
       msIO_sendHeaders();
       msIO_printf("<HTML>\n");
       msIO_printf("<HEAD><TITLE>MapServer Message</TITLE></HEAD>\n");
-      msIO_printf("<!-- %s -->\n", msGetVersion());
+      if(version[0] != '\0') msIO_printf("<!-- %s -->\n", version);
       msIO_printf("<BODY BGCOLOR=\"#FFFFFF\">\n");
       msWriteErrorXML(stdout);
       msIO_printf("</BODY></HTML>");
@@ -194,9 +152,9 @@ static void setClassGroup(layerObj *layer, char *classgroup)
 ** Extract Map File name from params and load it.
 ** Returns map object or NULL on error.
 */
-mapObj *msCGILoadMap(mapservObj *mapserv)
+mapObj *msCGILoadMap(mapservObj *mapserv, configObj *config)
 {
-  int i, j;
+  int i;
   mapObj *map = NULL;
 
 #ifdef _WIN32
@@ -204,96 +162,78 @@ mapObj *msCGILoadMap(mapservObj *mapserv)
 #else
   const char* ms_map_bad_pattern_default = "[/\\]{2}|[/\\]?\\.+[/\\]|,";
 #endif
-  const char *ms_map_env_bad_pattern_default = "^(AUTH_.*|CERT_.*|CONTENT_(LENGTH|TYPE)|DOCUMENT_(ROOT|URI)|GATEWAY_INTERFACE|HTTP.*|QUERY_STRING|PATH_(INFO|TRANSLATED)|REMOTE_.*|REQUEST_(METHOD|URI)|SCRIPT_(FILENAME|NAME)|SERVER_.*)";
 
   int ms_mapfile_tainted = MS_TRUE;
   const char *ms_mapfile = CPLGetConfigOption("MS_MAPFILE", NULL);
 
   const char *ms_map_no_path = CPLGetConfigOption("MS_MAP_NO_PATH", NULL);
   const char *ms_map_pattern = CPLGetConfigOption("MS_MAP_PATTERN", NULL);
-  const char *ms_map_env_pattern = CPLGetConfigOption("MS_MAP_ENV_PATTERN", NULL);
 
   const char *ms_map_bad_pattern = CPLGetConfigOption("MS_MAP_BAD_PATTERN", NULL);
   if(ms_map_bad_pattern == NULL) ms_map_bad_pattern = ms_map_bad_pattern_default;
 
-  const char *ms_map_env_bad_pattern = CPLGetConfigOption("MS_MAP_ENV_BAD_PATTERN", NULL);
-  if(ms_map_env_bad_pattern == NULL) ms_map_env_bad_pattern = ms_map_env_bad_pattern_default;
+  const char *map_value = NULL;
 
-  for(i=0; i<mapserv->request->NumParams; i++) /* find the mapfile parameter first */
-    if(strcasecmp(mapserv->request->ParamNames[i], "map") == 0) break;
+  if(mapserv->request->api_path != NULL) {
+    map_value = mapserv->request->api_path[0]; /* mapfile is *always* in the first position (/{mapfile}/{signature}) of an API call */
+  } else {
+    for(i=0; i<mapserv->request->NumParams; i++) { /* find the map parameter */
+      if(strcasecmp(mapserv->request->ParamNames[i], "map") == 0) {
+        map_value = mapserv->request->ParamValues[i];
+        break;
+      }
+    }
+  }
 
-  if(i == mapserv->request->NumParams) {
+  if(map_value == NULL) {
     if(ms_mapfile == NULL) {
       msSetError(MS_WEBERR, "CGI variable \"map\" is not set.", "msCGILoadMap()"); /* no default, outta here */
       return NULL;
     }
     ms_mapfile_tainted = MS_FALSE;
   } else {
-    if(getenv(mapserv->request->ParamValues[i])) { /* an environment variable references the actual file to use */
-      /* validate env variable name */
-      if(msIsValidRegex(ms_map_env_bad_pattern) == MS_FALSE || msCaseEvalRegex(ms_map_env_bad_pattern, mapserv->request->ParamValues[i]) == MS_TRUE) {
-        msSetError(MS_WEBERR, "CGI variable \"map\" fails to validate.", "msCGILoadMap()");
-        return NULL;
-      }
-      if(ms_map_env_pattern != NULL && msEvalRegex(ms_map_env_pattern, mapserv->request->ParamValues[i]) != MS_TRUE) {
-        msSetError(MS_WEBERR, "CGI variable \"map\" fails to validate.", "msCGILoadMap()");
-        return NULL;
-      }
-      ms_mapfile = getenv(mapserv->request->ParamValues[i]);
+    ms_mapfile = msConfigGetMap(config, map_value); /* does NOT check the environment, only the config */
+    if(ms_mapfile) {
+      ms_mapfile_tainted = MS_FALSE;
     } else {
-      /* by now we know the request isn't for something in an environment variable */
+      /* by now we know the map parameter isn't referencing something in the configuration */
       if(ms_map_no_path != NULL) {
-        msSetError(MS_WEBERR, "CGI variable \"map\" not found in environment and this server is not configured for full paths.", "msCGILoadMap()");
+        msSetError(MS_WEBERR, "CGI variable \"map\" not found in configuration and this server is not configured for full paths.", "msCGILoadMap()");
         return NULL;
       }
-      ms_mapfile = mapserv->request->ParamValues[i];
+      ms_mapfile = map_value;
     }
   }
 
   /* validate ms_mapfile if tainted */
   if(ms_mapfile_tainted == MS_TRUE) {
+    if(ms_map_pattern == NULL) { // can't go any further, bail
+      msSetError(MS_WEBERR, "Required configuration value MS_MAP_PATTERN not set.", "msCGILoadMap()");
+      return NULL;
+    }
     if(msIsValidRegex(ms_map_bad_pattern) == MS_FALSE || msEvalRegex(ms_map_bad_pattern, ms_mapfile) == MS_TRUE) {
       msSetError(MS_WEBERR, "CGI variable \"map\" fails to validate.", "msCGILoadMap()");
       return NULL;
     }
-    if(ms_map_pattern != NULL && msEvalRegex(ms_map_pattern, ms_mapfile) != MS_TRUE) {
+    if(msEvalRegex(ms_map_pattern, ms_mapfile) != MS_TRUE) {
       msSetError(MS_WEBERR, "CGI variable \"map\" fails to validate.", "msCGILoadMap()");
       return NULL;
     }
   }
 
   /* ok to try to load now */
-  map = msLoadMap(ms_mapfile, NULL);
-  if(!map) return NULL;
+  map = msLoadMap(ms_mapfile, NULL, config);
+  if(!map) return NULL;  
+
+  /* handle common parameters */
+  if(commonLoadForm(mapserv, map) != MS_SUCCESS) {
+    msFreeMap(map);
+    return NULL;
+  }
 
   if(!msLookupHashTable(&(map->web.validation), "immutable")) {
-    /* check for any %variable% substitutions here, also do any map_ changes, we do this here so WMS/WFS  */
+    /* check for any %variable% substitutions, we do this here so WMS/WFS  */
     /* services can take advantage of these "vendor specific" extensions */
-    for(i=0; i<mapserv->request->NumParams; i++) {
-      /*
-       ** a few CGI variables should be skipped altogether
-       **
-       ** qstring: there is separate per layer validation for attribute queries and the substitution checks
-       **          below conflict with that so we avoid it here
-       */
-      if(strncasecmp(mapserv->request->ParamNames[i],"qstring",7) == 0) continue;
-
-      /* check to see if there are any additions to the mapfile */
-      if(strncasecmp(mapserv->request->ParamNames[i],"map_",4) == 0 || strncasecmp(mapserv->request->ParamNames[i],"map.",4) == 0) {
-        if(msUpdateMapFromURL(map, mapserv->request->ParamNames[i], mapserv->request->ParamValues[i]) != MS_SUCCESS) {
-          msFreeMap(map);
-          return NULL;
-        }
-        continue;
-      }
-
-      if(strncasecmp(mapserv->request->ParamNames[i],"classgroup",10) == 0) { /* #4207 */
-        for(j=0; j<map->numlayers; j++) {
-          setClassGroup(GET_LAYER(map, j), mapserv->request->ParamValues[i]);
-        }
-        continue;
-      }
-    }
 
     msApplySubstitutions(map, mapserv->request->ParamNames, mapserv->request->ParamValues, mapserv->request->NumParams);
     msApplyDefaultSubstitutions(map);
@@ -342,7 +282,7 @@ int msCGISetMode(mapservObj *mapserv)
   int i, j;
 
 
-  mode = getenv("MS_MODE");
+  mode = CPLGetConfigOption("MS_MODE", NULL);
   for( i=0; i<mapserv->request->NumParams; i++ ) {
     if(strcasecmp(mapserv->request->ParamNames[i], "mode") == 0) {
       mode = mapserv->request->ParamValues[i];
@@ -379,8 +319,175 @@ int msCGISetMode(mapservObj *mapserv)
   return MS_SUCCESS;
 }
 
+/*
+** API-related funtions.
+*/
+int msCGIIsAPIRequest(mapservObj *mapserv) 
+{
+  char **tmp_api_path=NULL;
+  int i, n, tmp_api_path_length=0;
 
+  mapserv->request->path_info = getenv("PATH_INFO");
+  if(mapserv->request->path_info != NULL && strlen(mapserv->request->path_info) > 0) {
+    tmp_api_path = msStringSplit(mapserv->request->path_info, '/', &tmp_api_path_length); // ignores consecutive delimeters
+    if(tmp_api_path_length >= 3) { // /{mapfile}/{signature} so 3 components at a minimum (1st component is a zero-length string)
 
+      // capture only non-zero length components
+      n = 0;
+      for(i=0; i<tmp_api_path_length; i++) {
+        if(strlen(tmp_api_path[i]) > 0)
+          n++;
+      }
+
+      if(n < 2) { // not enough non-zero length components for a legitimate API request
+        msFreeCharArray(tmp_api_path, tmp_api_path_length);
+        return MS_FALSE;
+      }
+
+      mapserv->request->api_path = (char **) msSmallMalloc(sizeof(char *)*n);
+      if(mapserv->request->api_path == NULL) {
+        msFreeCharArray(tmp_api_path, tmp_api_path_length);
+        return MS_FALSE;
+      }
+
+      mapserv->request->api_path_length = 0;
+      for(i=0; i<tmp_api_path_length; i++) {
+        if(strlen(tmp_api_path[i]) > 0) {
+          mapserv->request->api_path[mapserv->request->api_path_length] = msStrdup(tmp_api_path[i]);
+          mapserv->request->api_path_length++;
+        }
+      }
+
+      msFreeCharArray(tmp_api_path, tmp_api_path_length);
+      return MS_TRUE;
+    } else {
+      msFreeCharArray(tmp_api_path, tmp_api_path_length);      
+    }
+  }
+
+  return MS_FALSE;
+}
+
+int msCGIDispatchAPIRequest(mapservObj *mapserv) 
+{
+  // should be a more elegant way to do this (perhaps similar to how drivers are handled)
+  if(strcmp("ogcapi", mapserv->request->api_path[1]) == 0) {
+#ifdef USE_OGCAPI_SVR
+    return msOGCAPIDispatchRequest(mapserv->map, mapserv->request);
+#else
+    msSetError(MS_OGCAPIERR, "OGC API server support is not enabled.", "msCGIDispatchAPIRequest()");
+#endif
+  } else {
+    msSetError(MS_WEBERR, "Invalid API signature.", "msCGIDispatchAPIRequest()");
+  }
+
+  return MS_FAILURE;
+}
+
+/*
+** Process common parameters that can apply to CGI and WxS calls - there are just a few and affect the mapObj directly.
+*/
+static int commonLoadForm(mapservObj *mapserv, mapObj *map)
+{
+  double tmpval;
+  char *strtoderr;
+
+  if(!mapserv || !map) return MS_FAILURE;
+
+  for(int i=0; i<mapserv->request->NumParams; i++) {
+    if(strlen(mapserv->request->ParamValues[i]) == 0) continue;
+
+    if(strncasecmp(mapserv->request->ParamNames[i], "classgroup", 10) == 0) { /* #4207 */
+      for(int j=0; j<map->numlayers; j++) {
+	setClassGroup(GET_LAYER(map, j), mapserv->request->ParamValues[i]);
+      }
+      continue;
+    }
+
+    /*
+    ** For backwards compatibility. Might want to consider a vendor parameter for WFS specifically and then deprecate this.
+    */
+    if(strcasecmp(mapserv->request->ParamNames[i], "map.extent") == 0 || strcasecmp(mapserv->request->ParamNames[i], "map_extent") == 0) {      
+      int n=0;
+      char **tokens = msStringSplit(mapserv->request->ParamValues[i], ' ', &n);
+
+      if(!tokens) {
+	msSetError(MS_MEMERR, NULL, "commonLoadForm()");
+	return MS_FAILURE;
+      }
+
+      if(n != 4) {
+	msSetError(MS_WEBERR, "Not enough arguments for mapext.", "commonLoadForm()");
+	msFreeCharArray(tokens,n);
+	return MS_FAILURE;
+      }
+
+      GET_NUMERIC_NO_ERROR(tokens[0], map->extent.minx);
+      FREE_TOKENS_ON_ERROR(4);
+      GET_NUMERIC_NO_ERROR(tokens[1], map->extent.miny);
+      FREE_TOKENS_ON_ERROR(4);
+      GET_NUMERIC_NO_ERROR(tokens[2], map->extent.maxx);
+      FREE_TOKENS_ON_ERROR(4);
+      GET_NUMERIC_NO_ERROR(tokens[3], map->extent.maxy);
+      FREE_TOKENS_ON_ERROR(4);
+
+      msFreeCharArray(tokens, 4);
+
+      if (!MS_VALID_EXTENT(map->extent)) {
+	msSetError(MS_WEBERR, "Supplied extent is invalid. Check that it is in the form: minx, miny, maxx, maxy", "commonLoadForm()");
+	return(MS_FAILURE);
+      }
+    }
+
+    /* 
+    ** For backwards compatibility - we don't use plain RESOLUTION here because of a potential conflict WCS. Might want
+    ** to consider a vendor parameter for WMS specifically and then deprecate these.
+    */
+    if(strcasecmp(mapserv->request->ParamNames[i], "map.resolution") == 0 || strcasecmp(mapserv->request->ParamNames[i], "map_resolution") == 0) {
+      GET_NUMERIC(mapserv->request->ParamValues[i], tmpval);
+      if(tmpval < MS_RESOLUTION_MIN || tmpval > MS_RESOLUTION_MAX) {
+        msSetError(MS_WEBERR, "Resolution value out of range.", "commonLoadForm()");
+        return MS_FAILURE;
+      }
+      map->resolution = (int)tmpval;
+      continue;
+    }
+
+    if(strcasecmp(mapserv->request->ParamNames[i],"keysize") == 0) { // legend keysize, used with legend-related outputs
+      int n=0;
+      char **tokens = msStringSplit(mapserv->request->ParamValues[i], ' ', &n);
+
+      if(!tokens) {
+        msSetError(MS_MEMERR, NULL, "commonLoadForm()");
+        return MS_FAILURE;
+      }
+
+      if(n != 2) {
+        msSetError(MS_WEBERR, "Not enough arguments for keysize.", "commonLoadForm()");
+        msFreeCharArray(tokens,n);
+        return MS_FAILURE;
+      }
+
+      GET_NUMERIC_NO_ERROR(tokens[0],tmpval);
+      FREE_TOKENS_ON_ERROR(2);
+      map->legend.keysizex = (int)tmpval;
+      GET_NUMERIC_NO_ERROR(tokens[1],tmpval);
+      FREE_TOKENS_ON_ERROR(2);
+      map->legend.keysizey = (int)tmpval;
+
+      msFreeCharArray(tokens, 2);
+
+      if(map->legend.keysizex < MS_LEGEND_KEYSIZE_MIN || map->legend.keysizex > MS_LEGEND_KEYSIZE_MAX || map->legend.keysizey < MS_LEGEND_KEYSIZE_MIN || map->legend.keysizey > MS_LEGEND_KEYSIZE_MAX) {
+        msSetError(MS_WEBERR, "Legend keysize out of range.", "commonLoadForm()");
+        return MS_FAILURE;
+      }
+
+      continue;
+    }
+  }
+
+  return MS_SUCCESS;
+}
 
 /*
 ** Process CGI parameters.
@@ -523,7 +630,6 @@ int msCGILoadForm(mapservObj *mapserv)
 
         msFreeCharArray(tokens, 4);
 
-#ifdef USE_PROJ
         /*
          * If there is a projection in the map file, and it is not lon/lat, and the
          * extents "look like" they *are* lon/lat, based on their size,
@@ -533,14 +639,13 @@ int msCGILoadForm(mapservObj *mapserv)
          *         and coincidentally fall in the lon/lat range, bad things
          *         will ensue.
          */
-        if(mapserv->map->projection.proj && !pj_is_latlong(mapserv->map->projection.proj)
+        if(mapserv->map->projection.proj && !msProjIsGeographicCRS(&(mapserv->map->projection))
             && (mapserv->map->extent.minx >= -180.0 && mapserv->map->extent.minx <= 180.0)
             && (mapserv->map->extent.miny >= -90.0 && mapserv->map->extent.miny <= 90.0)
             && (mapserv->map->extent.maxx >= -180.0 && mapserv->map->extent.maxx <= 180.0)
             && (mapserv->map->extent.maxy >= -90.0 && mapserv->map->extent.maxy <= 90.0)) {
           msProjectRect(&(mapserv->map->latlon), &(mapserv->map->projection), &(mapserv->map->extent)); /* extent is a in lat/lon */
         }
-#endif
 
         if((mapserv->map->extent.minx != mapserv->map->extent.maxx) && (mapserv->map->extent.miny != mapserv->map->extent.maxy)) { /* extent seems ok */
           mapserv->CoordSource = FROMUSERBOX;
@@ -595,13 +700,11 @@ int msCGILoadForm(mapservObj *mapserv)
 
         msFreeCharArray(tokens, 2);
 
-#ifdef USE_PROJ
-        if(mapserv->map->projection.proj && !pj_is_latlong(mapserv->map->projection.proj)
+        if(mapserv->map->projection.proj && !msProjIsGeographicCRS(&(mapserv->map->projection))
             && (mapserv->mappnt.x >= -180.0 && mapserv->mappnt.x <= 180.0)
             && (mapserv->mappnt.y >= -90.0 && mapserv->mappnt.y <= 90.0)) {
           msProjectPoint(&(mapserv->map->latlon), &(mapserv->map->projection), &mapserv->mappnt); /* point is a in lat/lon */
         }
-#endif
 
         if(mapserv->CoordSource == NONE) { /* don't override previous settings (i.e. buffer or scale ) */
           mapserv->CoordSource = FROMUSERPNT;
@@ -649,13 +752,11 @@ int msCGILoadForm(mapservObj *mapserv)
           line.point[j].x = atof(tmp[2*j]);
           line.point[j].y = atof(tmp[2*j+1]);
 
-#ifdef USE_PROJ
-          if(mapserv->QueryCoordSource == FROMUSERSHAPE && mapserv->map->projection.proj && !pj_is_latlong(mapserv->map->projection.proj)
+          if(mapserv->QueryCoordSource == FROMUSERSHAPE && mapserv->map->projection.proj && !msProjIsGeographicCRS(&(mapserv->map->projection))
               && (line.point[j].x >= -180.0 && line.point[j].x <= 180.0)
               && (line.point[j].y >= -90.0 && line.point[j].y <= 90.0)) {
             msProjectPoint(&(mapserv->map->latlon), &(mapserv->map->projection), &line.point[j]); /* point is a in lat/lon */
           }
-#endif
         }
 
         if(msAddLine(mapserv->map->query.shape, &line) == -1) {
@@ -852,6 +953,67 @@ int msCGILoadForm(mapservObj *mapserv)
 
       if(mapserv->ImgCols > mapserv->map->maxsize || mapserv->ImgRows > mapserv->map->maxsize || mapserv->ImgCols <= 0 || mapserv->ImgRows <= 0) {
         msSetError(MS_WEBERR, "Image size out of range.", "msCGILoadForm()");
+        return MS_FAILURE;
+      }
+
+      continue;
+    }
+
+    if(strcasecmp(mapserv->request->ParamNames[i], "resolution") == 0) {
+      GET_NUMERIC(mapserv->request->ParamValues[i], tmpval);
+      if(tmpval < MS_RESOLUTION_MIN || tmpval > MS_RESOLUTION_MAX) {
+        msSetError(MS_WEBERR, "Resolution value out of range.", "msCGILoadForm()");
+        return MS_FAILURE;
+      }
+      mapserv->map->resolution = (int)tmpval;
+      continue;
+    }
+
+    // map.imagetype and map_imagetype are for backwards compatibility and may be removed in the future
+    if(strcasecmp(mapserv->request->ParamNames[i], "imagetype") == 0 || strcasecmp(mapserv->request->ParamNames[i], "map.imagetype") == 0 || strcasecmp(mapserv->request->ParamNames[i], "map_imagetype") == 0) {
+
+      const char *imagetype_validation_pattern = msLookupHashTable(&(mapserv->map->web.validation), "imagetype");
+      if(imagetype_validation_pattern != NULL && msEvalRegex(imagetype_validation_pattern, mapserv->request->ParamValues[i]) != MS_TRUE) { /* optional check */
+	msSetError(MS_WEBERR, "Imagetype value fails to validate.", "msCGILoadMap()");
+	return MS_FAILURE;
+      }
+
+      outputFormatObj *format = msSelectOutputFormat(mapserv->map, mapserv->request->ParamValues[i]);
+      if(format == NULL) {
+	msSetError(MS_WEBERR, "Invalid imagetype value.\n", "msCGILoadForm()");
+        return MS_FAILURE;
+      } else {
+	msFree((char *) mapserv->map->imagetype);
+	mapserv->map->imagetype = msStrdup(mapserv->request->ParamValues[i]);
+	msApplyOutputFormat(&(mapserv->map->outputformat), format, MS_NOOVERRIDE);
+      }
+    }
+
+    if(strcasecmp(mapserv->request->ParamNames[i],"tilesize") == 0) { /* size of existing image (pixels) */
+      tokens = msStringSplit(mapserv->request->ParamValues[i], ' ', &n);
+
+      if(!tokens) {
+        msSetError(MS_MEMERR, NULL, "msCGILoadForm()");
+        return MS_FAILURE;
+      }
+
+      if(n != 2) {
+        msSetError(MS_WEBERR, "Not enough arguments for tilesize.", "msCGILoadForm()");
+        msFreeCharArray(tokens,n);
+        return MS_FAILURE;
+      }
+
+      GET_NUMERIC_NO_ERROR(tokens[0],tmpval);
+      FREE_TOKENS_ON_ERROR(2);
+      mapserv->TileWidth = (int)tmpval;
+      GET_NUMERIC_NO_ERROR(tokens[1],tmpval);
+      FREE_TOKENS_ON_ERROR(2);
+      mapserv->TileHeight = (int)tmpval;
+
+      msFreeCharArray(tokens, 2);
+
+      if(mapserv->TileWidth > mapserv->map->maxsize || mapserv->TileHeight > mapserv->map->maxsize || mapserv->TileWidth <= 0 || mapserv->TileHeight <= 0) {
+        msSetError(MS_WEBERR, "Tile size out of range.", "msCGILoadForm()");
         return MS_FAILURE;
       }
 
@@ -1100,7 +1262,7 @@ int setExtentFromShapes(mapservObj *mapserv)
   double dx, dy, cellsize;
 
   rectObj tmpext= {-1.0,-1.0,-1.0,-1.0};
-  pointObj tmppnt= {-1.0,-1.0};
+  pointObj tmppnt= {-1.0,-1.0,-1.0,-1.0};
 
   msGetQueryResultBounds(mapserv->map, &(tmpext));
 
@@ -1225,13 +1387,11 @@ int msCGIDispatchCoordinateRequest(mapservObj *mapserv)
   msIO_printf("Your \"<i>click</i>\" corresponds to (approximately): (%g, %g).",
               mapserv->mappnt.x, mapserv->mappnt.y);
 
-#ifdef USE_PROJ
-  if(mapserv->map->projection.proj != NULL && !pj_is_latlong(mapserv->map->projection.proj) ) {
+  if(mapserv->map->projection.proj != NULL && !msProjIsGeographicCRS(&(mapserv->map->projection)) ) {
     pointObj p=mapserv->mappnt;
     msProjectPoint(&(mapserv->map->projection), &(mapserv->map->latlon), &p);
     msIO_printf("Computed lat/lon value is (%g, %g).\n",p.x, p.y);
   }
-#endif
   return MS_SUCCESS;
 }
 
@@ -1307,13 +1467,6 @@ int msCGIDispatchQueryRequest(mapservObj *mapserv)
           }
 
           mapserv->map->query.type = MS_QUERY_BY_POINT;
-          mapserv->map->query.mode = MS_QUERY_SINGLE;
-
-          mapserv->map->query.point = mapserv->mappnt;
-          mapserv->map->query.buffer = mapserv->Buffer;
-
-          mapserv->map->query.layer = mapserv->QueryLayerIndex;
-          mapserv->map->query.slayer = mapserv->SelectLayerIndex; /* this will trigger the feature query eventually */
         } else { /* FEATURENQUERY */
           switch(mapserv->QueryCoordSource) {
             case FROMIMGPNT:
@@ -1511,11 +1664,11 @@ int msCGIDispatchQueryRequest(mapservObj *mapserv)
     } /* end mode switch */
 
     /* finally execute the query */
-    if((status = msExecuteQuery(mapserv->map)) != MS_SUCCESS) return MS_FAILURE;
+    if(msExecuteQuery(mapserv->map) != MS_SUCCESS) return MS_FAILURE;
   }
 
-  if(mapserv->map->querymap.width != -1) mapserv->map->width = mapserv->map->querymap.width; /* make sure we use the right size */
-  if(mapserv->map->querymap.height != -1) mapserv->map->height = mapserv->map->querymap.height;
+  if(mapserv->map->querymap.width > 0 && mapserv->map->querymap.width <= mapserv->map->maxsize) mapserv->map->width = mapserv->map->querymap.width; /* make sure we use the right size */
+  if(mapserv->map->querymap.height > 0 && mapserv->map->querymap.height <= mapserv->map->maxsize) mapserv->map->height = mapserv->map->querymap.height;
 
   if(mapserv->UseShapes)
     if(MS_SUCCESS != setExtentFromShapes(mapserv))
@@ -1553,8 +1706,8 @@ int msCGIDispatchImageRequest(mapservObj *mapserv)
     case TILE:
       msTileSetExtent(mapserv);
 
-      if(!strcmp(MS_IMAGE_MIME_TYPE(mapserv->map->outputformat), "application/x-protobuf")) {
-        if((status = msMVTWriteTile(mapserv->map, mapserv->sendheaders)) != MS_SUCCESS) return MS_FAILURE;
+      if(!strcmp(MS_IMAGE_MIME_TYPE(mapserv->map->outputformat), "application/vnd.mapbox-vector-tile") || !strcmp(MS_IMAGE_MIME_TYPE(mapserv->map->outputformat), "application/x-protobuf")) {
+        if(msMVTWriteTile(mapserv->map, mapserv->sendheaders) != MS_SUCCESS) return MS_FAILURE;
         return MS_SUCCESS;
       }
 
@@ -1667,7 +1820,7 @@ int msCGIDispatchLegendIconRequest(mapservObj *mapserv)
 
   if(numtokens == 2) { /* check the class index */
     classindex = atoi(tokens[1]);
-    if(classindex >= GET_LAYER(mapserv->map, layerindex)->numclasses) {
+    if(classindex < 0 || classindex >= GET_LAYER(mapserv->map, layerindex)->numclasses) {
       msSetError(MS_WEBERR, "Icon class=%d not found in layer=%s.", "mapserv()", classindex, GET_LAYER(mapserv->map, layerindex)->name);
       status = MS_FAILURE;
       goto li_cleanup;
@@ -1690,7 +1843,7 @@ int msCGIDispatchLegendIconRequest(mapservObj *mapserv)
   }
 
   /* ensure we have an image format representing the options for the legend. */
-  msApplyOutputFormat(&format, mapserv->map->outputformat, mapserv->map->legend.transparent, mapserv->map->legend.interlace, MS_NOOVERRIDE);
+  msApplyOutputFormat(&format, mapserv->map->outputformat, mapserv->map->legend.transparent);
 
   /* initialize the legend image */
   if( ! MS_RENDERER_PLUGIN(format) ) {
@@ -1708,7 +1861,7 @@ int msCGIDispatchLegendIconRequest(mapservObj *mapserv)
   img->map = mapserv->map;
 
   /* drop this reference to output format */
-  msApplyOutputFormat(&format, NULL, MS_NOOVERRIDE, MS_NOOVERRIDE, MS_NOOVERRIDE);
+  msApplyOutputFormat(&format, NULL, MS_NOOVERRIDE);
 
   if(msDrawLegendIcon(mapserv->map, GET_LAYER(mapserv->map, layerindex), GET_LAYER(mapserv->map, layerindex)->class[classindex], mapserv->map->legend.keysizex,  mapserv->map->legend.keysizey, img, 0, 0, MS_TRUE,
       ((mapserv->hittest)?(&mapserv->hittest->layerhits[layerindex].classhits[classindex]):(NULL))) != MS_SUCCESS) {
@@ -1854,18 +2007,20 @@ int msCGIDispatchRequest(mapservObj *mapserv)
 int msCGIHandler(const char *query_string, void **out_buffer, size_t *buffer_length)
 {
   int x,m=0;
-  struct mstimeval execstarttime, execendtime;
-  struct mstimeval requeststarttime, requestendtime;
-  mapservObj* mapserv = NULL;
+  struct mstimeval execstarttime = {0}, execendtime = {0};
+  struct mstimeval requeststarttime = {0}, requestendtime = {0};
+  mapservObj *mapserv = NULL;
   char *queryString = NULL;
   int maxParams = MS_DEFAULT_CGI_PARAMS;
   msIOContext *ctx;
   msIOBuffer  *buf;
 
+  configObj *config = NULL;
+
   msIO_installStdoutToBuffer();
 
-  /* Use PROJ_LIB env vars if set */
-  msProjLibInitFromEnv();
+  /* Use PROJ_DATA/PROJ_LIB env vars if set */
+  msProjDataInitFromEnv();
 
   /* Use MS_ERRORFILE and MS_DEBUGLEVEL env vars if set */
   if( msDebugInitFromEnv() != MS_SUCCESS ) {
@@ -1880,6 +2035,12 @@ int msCGIHandler(const char *query_string, void **out_buffer, size_t *buffer_len
     msIO_setHeader("Content-Type","text/html");
     msIO_sendHeaders();
     msIO_printf("No query information to decode. QUERY_STRING not set.\n");
+    goto end_request;
+  }
+
+  config = msLoadConfig(NULL);
+  if(config == NULL) {
+    msCGIWriteError(mapserv);
     goto end_request;
   }
   
@@ -1915,7 +2076,7 @@ int msCGIHandler(const char *query_string, void **out_buffer, size_t *buffer_len
     goto end_request;
   }
 
-  mapserv->map = msCGILoadMap(mapserv);
+  mapserv->map = msCGILoadMap(mapserv, config);
   if(!mapserv->map) {
     msCGIWriteError(mapserv);
     goto end_request;
@@ -1923,7 +2084,6 @@ int msCGIHandler(const char *query_string, void **out_buffer, size_t *buffer_len
 
   if( mapserv->map->debug >= MS_DEBUGLEVEL_TUNING)
     msGettimeofday(&requeststarttime, NULL);
-
 
   if(msCGIDispatchRequest(mapserv) != MS_SUCCESS) {
     msCGIWriteError(mapserv);
@@ -1939,8 +2099,8 @@ end_request:
               (requestendtime.tv_sec+requestendtime.tv_usec/1.0e6)-
               (requeststarttime.tv_sec+requeststarttime.tv_usec/1.0e6) );
     }
-    msCGIWriteLog(mapserv,MS_FALSE);
     msFreeMapServObj(mapserv);
+    msFreeConfig(config);
   }
 
   /* normal case, processing is complete */

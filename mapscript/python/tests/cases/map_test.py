@@ -196,68 +196,6 @@ class EmptyMapExceptionTestCase(unittest.TestCase):
         self.assertRaises(mapscript.MapServerError, self.map.draw)
 
 
-class MapMetaDataTestCase(MapTestCase):
-
-    def testInvalidKeyAccess(self):
-        """MapMetaDataTestCase.testInvalidKeyAccess: an invalid map metadata key returns proper error"""
-        self.assertRaises(mapscript.MapServerError, self.map.getMetaData, 'foo')
-
-    def testFirstKeyAccess(self):
-        """MapMetaDataTestCase.testFirstKeyAccess: first metadata key is correct value"""
-        key = self.map.getFirstMetaDataKey()
-        assert key == 'key1'
-        val = self.map.getMetaData(key)
-        assert val == 'value1'
-
-    def testLastKeyAccess(self):
-        """MapMetaDataTestCase.testLastKeyAccess: last metadata key is correct value"""
-        key = self.map.getFirstMetaDataKey()
-        for i in range(4):
-            key = self.map.getNextMetaDataKey(key)
-            assert key is not None
-        key = self.map.getNextMetaDataKey(key)
-        assert key is None
-
-    def testMapMetaData(self):
-        """MapMetaDataTestCase.testMapMetaData: map metadata keys are correct values"""
-        keys = []
-        key = self.map.getFirstMetaDataKey()
-        if key is not None:
-            keys.append(key)
-        while 1:
-            key = self.map.getNextMetaDataKey(key)
-            if not key:
-                break
-            keys.append(key)
-        assert keys == ['key1', 'key2', 'key3', 'key4', 'ows_enable_request'], keys
-
-    def testLayerMetaData(self):
-        """MapMetaDataTestCase.testLayerMetaData: layer metadata keys are correct values"""
-        keys = []
-        key = self.map.getLayer(1).getFirstMetaDataKey()
-        if key is not None:
-            keys.append(key)
-        while 1:
-            key = self.map.getLayer(1).getNextMetaDataKey(key)
-            if not key:
-                break
-            keys.append(key)
-        assert keys == ['key1', 'key2', 'key3', 'key4'], keys
-
-    def testClassMetaData(self):
-        """MapMetaDataTestCase.testClassMetaData: class metadata keys are correct values"""
-        keys = []
-        key = self.map.getLayer(1).getClass(0).getFirstMetaDataKey()
-        if key is not None:
-            keys.append(key)
-        while 1:
-            key = self.map.getLayer(1).getClass(0).getNextMetaDataKey(key)
-            if not key:
-                break
-            keys.append(key)
-        assert keys == ['key1', 'key2', 'key3', 'key4'], keys
-
-
 class NoFontSetTestCase(unittest.TestCase):
 
     def testNoGetFontSetFile(self):
@@ -324,9 +262,72 @@ class MapSetWKTTestCase(MapTestCase):
     def testWellKnownGEOGCS(self):
         self.map.setWKTProjection('WGS84')
         proj4 = self.map.getProjection()
-        assert proj4.find('+proj=longlat') != -1, proj4
-        assert proj4.find('+datum=WGS84') != -1, proj4
+        assert ('+proj=longlat' in proj4 and '+datum=WGS84' in proj4) or proj4 == '+init=epsg:4326', proj4
         assert (mapscript.projectionObj(proj4)).getUnits() != mapscript.MS_METERS
+
+
+class MapRunSubTestCase(MapTestCase):
+
+    def testDefaultSubstitutions(self):
+        s = """
+MAP
+    WEB
+        VALIDATION
+            'key1' '.*'
+            'default_key1' 'Test Title'
+        END
+        METADATA
+            "wms_title" "%key1%"
+        END
+    END
+END
+        """
+        map = mapscript.fromstring(s)
+        map.applyDefaultSubstitutions()
+        assert map.web.metadata["wms_title"] == "Test Title"
+
+    def testRuntimeSubstitutions(self):
+        """
+        For supported parameters see https://mapserver.org/cgi/runsub.html#parameters-supported
+        """
+        s = """
+MAP
+    WEB
+        VALIDATION
+            'key1' '.*'
+            'default_key1' 'Test Title'
+        END
+        METADATA
+            "wms_title" "%key1%"
+        END
+    END
+    LAYER
+        TYPE POINT
+        FILTER ([size]<%my_filter%)
+        VALIDATION
+            'my_filter' '^[0-9]$'
+        END
+    END
+END
+        """
+        map = mapscript.fromstring(s)
+
+        d = {"key1": "New Title", "my_filter": "3"}
+        map.applySubstitutions(d)
+
+        assert map.web.metadata["wms_title"] == "New Title"
+        assert map.getLayer(0).getFilterString() == "([size]<3)"
+
+
+class MapSLDTestCase(MapTestCase):
+    def test(self):
+
+        test_map = mapscript.mapObj(TESTMAPFILE)
+        result = test_map.generateSLD()
+        assert result.startswith('<StyledLayerDescriptor version="1.0.0"'), result
+
+        result = test_map.generateSLD("1.1.0")
+        assert result.startswith('<StyledLayerDescriptor version="1.1.0"'), result
 
 
 if __name__ == '__main__':

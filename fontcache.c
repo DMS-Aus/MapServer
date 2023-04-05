@@ -32,6 +32,8 @@
 #include "fontcache.h"
 #include "dejavu-sans-condensed.h"
 
+#include "cpl_conv.h"
+
 typedef struct {
   FT_Library library;
   face_element *face_cache;
@@ -97,6 +99,7 @@ void msFreeFontCache(ft_cache *c) {
     UT_HASH_DEL(c->bitmap_glyph_cache, cur_bitmap);
     free(cur_bitmap);
   }
+  memset(c,0,sizeof(ft_cache));
 }
 
 ft_cache* msGetFontCache() {
@@ -162,7 +165,7 @@ void msFontCacheSetup() {
   ft_cache *c = msGetFontCache();
   msInitFontCache(c);
 #else
-  char* use_global_cache = getenv("MS_USE_GLOBAL_FT_CACHE");
+  const char *use_global_cache = CPLGetConfigOption("MS_USE_GLOBAL_FT_CACHE", NULL);
   if (use_global_cache)
     use_global_ft_cache = atoi(use_global_cache);
   else
@@ -200,6 +203,10 @@ unsigned int msGetGlyphIndex(face_element *face, unsigned int unicode) {
   if(face->face->charmap && face->face->charmap->encoding == FT_ENCODING_MS_SYMBOL) {
     unicode |= 0xf000; /* why? */
   }
+#ifdef USE_THREAD
+  if (use_global_ft_cache)
+	  msAcquireLock(TLOCK_TTF);
+#endif   
   UT_HASH_FIND_INT(face->index_cache,&unicode,ic);
   if(!ic) {
     ic = msSmallMalloc(sizeof(index_element));
@@ -279,8 +286,8 @@ glyph_element* msGetGlyphByIndex(face_element *face, unsigned int size, unsigned
   key.size = size;
 #ifdef USE_THREAD
   if (use_global_ft_cache)
-      msAcquireLock(TLOCK_TTF);
-#endif
+    msAcquireLock(TLOCK_TTF);
+#endif   
   UT_HASH_FIND(hh,face->glyph_cache,&key,sizeof(glyph_element_key),gc);
   if(!gc) {
     FT_Error error;
@@ -289,13 +296,19 @@ glyph_element* msGetGlyphByIndex(face_element *face, unsigned int size, unsigned
       FT_Set_Pixel_Sizes(face->face,0,MS_NINT(size * 96/72.0));
     }
     error = FT_Load_Glyph(face->face,key.codepoint,FT_LOAD_DEFAULT|FT_LOAD_NO_BITMAP|FT_LOAD_NO_HINTING|FT_LOAD_IGNORE_GLOBAL_ADVANCE_WIDTH);
+    if (error) {
+      msDebug("Unable to load glyph %u for font \"%s\". Using ? as fallback.\n", key.codepoint, face->font);
+      // If we can't find a glyph then try to fallback to a question mark.
+      unsigned int fallbackCodepoint = msGetGlyphIndex(face, 0x3F);
+      error = FT_Load_Glyph(face->face,fallbackCodepoint,FT_LOAD_DEFAULT|FT_LOAD_NO_BITMAP|FT_LOAD_NO_HINTING|FT_LOAD_IGNORE_GLOBAL_ADVANCE_WIDTH);
+    }
     if(error) {
-      msSetError(MS_MISCERR, "unable to load glyph %ud for font \"%s\"", "msGetGlyphByIndex()",key.codepoint, face->font);
+      msSetError(MS_MISCERR, "unable to load glyph %u for font \"%s\"", "msGetGlyphByIndex()",key.codepoint, face->font);
       free(gc);
 #ifdef USE_THREAD
       if (use_global_ft_cache)
-          msReleaseLock(TLOCK_TTF);
-#endif
+        msReleaseLock(TLOCK_TTF);
+#endif      
       return NULL;
     }
     gc->metrics.minx = face->face->glyph->metrics.horiBearingX / 64.0;
@@ -308,8 +321,8 @@ glyph_element* msGetGlyphByIndex(face_element *face, unsigned int size, unsigned
   }
 #ifdef USE_THREAD
   if (use_global_ft_cache)
-      msReleaseLock(TLOCK_TTF);
-#endif
+    msReleaseLock(TLOCK_TTF);
+#endif  
   return gc;
 }
 
@@ -337,8 +350,14 @@ outline_element* msGetGlyphOutline(face_element *face, glyph_element *glyph) {
     pen.x = pen.y = 0;
     FT_Set_Transform(face->face, &matrix, &pen);
     error = FT_Load_Glyph(face->face,glyph->key.codepoint,FT_LOAD_DEFAULT|FT_LOAD_NO_BITMAP/*|FT_LOAD_IGNORE_TRANSFORM*/|FT_LOAD_NO_HINTING|FT_LOAD_IGNORE_GLOBAL_ADVANCE_WIDTH);
+    if (error) {
+      msDebug("Unable to load glyph %u for font \"%s\". Using ? as fallback.\n", glyph->key.codepoint, face->font);
+      // If we can't find a glyph then try to fallback to a question mark.
+      unsigned int fallbackCodepoint = msGetGlyphIndex(face, 0x3F);
+      error = FT_Load_Glyph(face->face,fallbackCodepoint,FT_LOAD_DEFAULT|FT_LOAD_NO_BITMAP/*|FT_LOAD_IGNORE_TRANSFORM*/|FT_LOAD_NO_HINTING|FT_LOAD_IGNORE_GLOBAL_ADVANCE_WIDTH);
+    }
     if(error) {
-      msSetError(MS_MISCERR, "unable to load glyph %ud for font \"%s\"", "msGetGlyphByIndex()",glyph->key.codepoint, face->font);
+      msSetError(MS_MISCERR, "unable to load glyph %u for font \"%s\"", "msGetGlyphOutline()",glyph->key.codepoint, face->font);
 #ifdef USE_THREAD
       if (use_global_ft_cache)
         msReleaseLock(TLOCK_TTF);
@@ -347,6 +366,7 @@ outline_element* msGetGlyphOutline(face_element *face, glyph_element *glyph) {
     }
     error = FT_Outline_New(cache->library, face->face->glyph->outline.n_points,
         face->face->glyph->outline.n_contours, &oc->outline);
+    (void)error;
     FT_Outline_Copy(&face->face->glyph->outline, &oc->outline);
     oc->key = key;
     UT_HASH_ADD(hh,face->outline_cache,key,sizeof(outline_element_key), oc);

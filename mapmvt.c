@@ -197,22 +197,21 @@ static void freeMvtValue( VectorTile__Tile__Value *mvt_value ) {
 }
 
 static void freeMvtLayer( VectorTile__Tile__Layer *mvt_layer ) {
-  int i;
   if(mvt_layer->keys) {
-    for(i=0;i<mvt_layer->n_keys; i++) {
+    for(unsigned i=0;i<mvt_layer->n_keys; i++) {
       msFree(mvt_layer->keys[i]);
     }
     msFree(mvt_layer->keys);
   }
   if(mvt_layer->values) {
-    for(i=0;i<mvt_layer->n_values; i++) {
+    for(unsigned i=0;i<mvt_layer->n_values; i++) {
         freeMvtValue(mvt_layer->values[i]);
         msFree(mvt_layer->values[i]);
     }
     msFree(mvt_layer->values);
   }
   if(mvt_layer->features) {
-    for(i=0;i<mvt_layer->n_features; i++) {
+    for(unsigned i=0;i<mvt_layer->n_features; i++) {
         freeMvtFeature(mvt_layer->features[i]);
         msFree(mvt_layer->features[i]);
     }
@@ -319,7 +318,7 @@ int mvtWriteShape( layerObj *layer, shapeObj *shape, VectorTile__Tile__Layer *mv
 
   if(layer->type == MS_LAYER_POINT) {
     int idx=0, lastx=0, lasty=0;
-    mvt_feature->geometry[idx++] = COMMAND(MOVETO, mvt_feature->n_geometry-1);
+    mvt_feature->geometry[idx++] = COMMAND(MOVETO, (mvt_feature->n_geometry-1) / 2);
     for(i=0;i<shape->numlines;i++) {
       for(j=0;j<shape->line[i].numpoints;j++) {
         mvt_feature->geometry[idx++] = PARAMETER(MS_NINT(shape->line[i].point[j].x)-lastx);
@@ -360,8 +359,7 @@ int mvtWriteShape( layerObj *layer, shapeObj *shape, VectorTile__Tile__Layer *mv
 }
 
 static void freeMvtTile( VectorTile__Tile *mvt_tile ) {
-  int iLayer;
-  for(iLayer=0;iLayer<mvt_tile->n_layers;iLayer++) {
+  for(unsigned iLayer=0;iLayer<mvt_tile->n_layers;iLayer++) {
     freeMvtLayer(mvt_tile->layers[iLayer]);
     msFree(mvt_tile->layers[iLayer]);
   }
@@ -399,7 +397,7 @@ int msMVTWriteTile( mapObj *map, int sendheaders ) {
     value_lookup *cur_value_lookup, *tmp_value_lookup;
     rectObj rect;
 
-    int features_size = 0;
+    unsigned features_size = 0;
 
     if(!msLayerIsVisible(map, layer)) continue;
 
@@ -510,16 +508,25 @@ int msMVTWriteTile( mapObj *map, int sendheaders ) {
       }
 
       if( layer->project ) {
-        status = msProjectShape(&layer->projection, &layer->map->projection, &shape);
-      }      if( status == MS_SUCCESS ) {
+        if( layer->reprojectorLayerToMap == NULL )
+        {
+            layer->reprojectorLayerToMap = msProjectCreateReprojector(
+                &layer->projection, &map->projection);
+        }
+        if( layer->reprojectorLayerToMap )
+            status = msProjectShapeEx(layer->reprojectorLayerToMap, &shape);
+        else
+            status = MS_FAILURE;
+      }
+      if( status == MS_SUCCESS ) {
         status = mvtWriteShape( layer, &shape, mvt_layer, item_list, &value_lookup_cache, &map->extent, buffer );
       }
 
       feature_cleanup:
       msFreeShape(&shape);
-      if(retcode != MS_SUCCESS) goto layer_cleanup;
+      if(status != MS_SUCCESS) goto layer_cleanup;
     } /* next shape */
-    layer_cleanup:
+layer_cleanup:
     msLayerClose(layer);
     msGMLFreeItems(item_list);
     UT_HASH_ITER(hh, value_lookup_cache.cache, cur_value_lookup, tmp_value_lookup) {
@@ -537,8 +544,8 @@ int msMVTWriteTile( mapObj *map, int sendheaders ) {
   if( sendheaders ) {
     msIO_fprintf( stdout,
 		  "Content-Length: %d\r\n"
-		  "Content-Type: application/x-protobuf\r\n\r\n",
-                  len);
+		  "Content-Type: %s\r\n\r\n",
+                  len, MS_IMAGE_MIME_TYPE(map->outputformat));
   }
   msIO_fwrite(buf,len,1,stdout);
   msFree(buf);
@@ -550,6 +557,7 @@ int msMVTWriteTile( mapObj *map, int sendheaders ) {
 }
 
 int msPopulateRendererVTableMVT(rendererVTableObj * renderer) {
+  (void)renderer;
   return MS_SUCCESS;
 }
 #else

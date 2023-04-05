@@ -33,6 +33,10 @@
 #include "mapserver.h"
 #include "maphash.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #define IDPATTERN "^[0-9A-Za-z]{1,63}$"
 #define IDSIZE 64
 #define TEMPLATE_TYPE(s)  (((strncmp("http://", s, 7) == 0) || (strncmp("https://", s, 8) == 0) || (strncmp("ftp://", s, 6)) == 0)  ? MS_URL : MS_FILE)
@@ -91,6 +95,8 @@ typedef struct {
 
   int TileMode; /* can be GMAP, VE */
   char *TileCoords; /* for GMAP: 0 0 1; for VE: 013021023 */
+  int TileWidth;
+  int TileHeight;
 
   char Id[IDSIZE]; /* big enough for time + pid */
 
@@ -134,6 +140,7 @@ typedef struct {
   int NLR; /* number of results in a layer */
 
   map_hittest *hittest;
+
 } mapservObj;
 
 
@@ -181,6 +188,10 @@ MS_DLL_EXPORT char *msProcessQueryTemplate(mapObj *map,
     int numentries);
 
 MS_DLL_EXPORT int msGrowMapservLayers( mapservObj* msObj );
+
+#ifdef __cplusplus
+} /* extern C */
+#endif
 
 #endif
 

@@ -1,6 +1,4 @@
 /* ===========================================================================
-   $Id$
-
    Project:  MapServer
    Purpose:  SWIG interface file for mapscript imageObj extensions
    Author:   Steve Lime
@@ -30,8 +28,15 @@
 
 %extend imageObj {
 
-    /* imageObj constructor now takes filename as an optional argument. */
-    imageObj(int width, int height, outputFormatObj *input_format=NULL,
+  /**
+  Create a new :class:`imageObj` instance. If *filename* is specified, an imageObj
+  is created from the file and any specified *width*, *height*, and *format* parameters 
+  will be overridden by values of the image in *filename*.  Otherwise, if *format* is specified (as an :class:`outputFormatObj`) an imageObj is created
+  using that format. If *filename* is not specified, then *width* and *height* should be specified. 
+  The default resolution is currently 72 and defined by :data:`MS_DEFAULT_RESOLUTION` - this setting is 
+  not available in MapScript. 
+  */
+  imageObj(int width, int height, outputFormatObj *input_format=NULL,
              const char *file=NULL,
              double resolution=MS_DEFAULT_RESOLUTION, double defresolution=MS_DEFAULT_RESOLUTION)
     {
@@ -44,7 +49,7 @@
             format = input_format;
         }
         else {
-            format = msCreateDefaultOutputFormat(NULL, "AGG/PNG", "aggpng");
+            format = msCreateDefaultOutputFormat(NULL, "AGG/PNG", "aggpng", NULL);
             if (format)
                 msInitializeRendererVTable(format);
         }
@@ -95,20 +100,19 @@
         msFreeImage(self);
     }
 
-    /* saveGeo - see Bugzilla issue 549 */
+    /// Save image to filename. The optional map parameter must be specified if 
+    /// saving GeoTIFF images.
     void save(char *filename, mapObj *map=NULL)
     {
         msSaveImage(map, self, filename );
     }
 
-    /* ======================================================================
-       write()
-
-       Write image data to an open file handle.  Intended to replace
-       saveToString.  See python/pyextend.i for the Python specific
-       version of this method.
-    ====================================================================== */
 #ifndef SWIGPYTHON
+    /**
+    Write image data to an open file handle. Intended to replace
+    saveToString.  See ``python/pyextend.i`` for the Python specific
+    version of this method.
+    */
     int write( FILE *file=NULL )
     {
         int retval=MS_FAILURE;
@@ -149,6 +153,8 @@
     -------------------------------------------------------------------------
     */
 
+    /// Returns the image contents as a binary buffer. The exact form of this buffer will 
+    /// vary by MapScript language (e.g. a string in Python, byte[] array in Java and C#, unhandled in Perl)
     gdBuffer getBytes()
     {
         gdBuffer buffer;
@@ -167,6 +173,15 @@
         return buffer;
     }
 
+    /**
+    Returns the size of the binary buffer representing the image buffer
+
+    .. note:: 
+
+        The getSize method is inefficient as it does a call to getBytes and 
+        then computes the size of the byte array. The byte array is then immediately discarded. 
+        In most cases it is more efficient to call getBytes directly.
+    */
     int getSize() {
         gdBuffer buffer;
         int size=0;
@@ -182,4 +197,3 @@
         return size;
     }
 }
-

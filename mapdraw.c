@@ -76,25 +76,21 @@ imageObj *msPrepareImage(mapObj *map, int allow_nonsquare)
     rendererVTableObj *renderer = map->outputformat->vtable;
     colorObj *bg = &map->imagecolor;
     map->imagecolor.alpha=255;
-    if(map->transparent == MS_TRUE) {
-      /* don't set the image color */
-      bg = NULL;
-    }
 
-  image = renderer->createImage(map->width, map->height, map->outputformat,bg);
-  if (image == NULL)
-    return(NULL);
-  image->format = map->outputformat;
-  image->format->refcount++;
-  image->width = map->width;
-  image->height = map->height;
-
-  image->resolution = map->resolution;
-  image->resolutionfactor = map->resolution/map->defresolution;
-  if (map->web.imagepath)
-    image->imagepath = msStrdup(map->web.imagepath);
-  if (map->web.imageurl)
-    image->imageurl = msStrdup(map->web.imageurl);
+    image = renderer->createImage(map->width, map->height, map->outputformat,bg);
+    if (image == NULL)
+      return(NULL);
+    image->format = map->outputformat;
+    image->format->refcount++;
+    image->width = map->width;
+    image->height = map->height;
+    
+    image->resolution = map->resolution;
+    image->resolutionfactor = map->resolution/map->defresolution;
+    if (map->web.imagepath)
+      image->imagepath = msStrdup(map->web.imagepath);
+    if (map->web.imageurl)
+      image->imageurl = msStrdup(map->web.imageurl);
 
   } else if( MS_RENDERER_IMAGEMAP(map->outputformat) ) {
     image = msImageCreateIM(map->width, map->height, map->outputformat,
@@ -168,14 +164,63 @@ imageObj *msPrepareImage(mapObj *map, int allow_nonsquare)
                    / sqrt(2.0);
   }
 
-  /* compute layer scale factors now */
-  for(i=0; i<map->numlayers; i++) {
-    if(GET_LAYER(map, i)->sizeunits != MS_PIXELS)
-      GET_LAYER(map, i)->scalefactor = (msInchesPerUnit(GET_LAYER(map, i)->sizeunits,0)/msInchesPerUnit(map->units,0)) / geo_cellsize;
-    else if(GET_LAYER(map, i)->symbolscaledenom > 0 && map->scaledenom > 0)
-      GET_LAYER(map, i)->scalefactor = GET_LAYER(map, i)->symbolscaledenom/map->scaledenom*map->resolution/map->defresolution;
+  /* compute layer/class/style/label scale factors now */
+  for(int lid=0; lid<map->numlayers; lid++) {
+    layerObj * layer = GET_LAYER(map, lid);
+    if(layer->sizeunits != MS_PIXELS)
+      layer->scalefactor = (msInchesPerUnit(layer->sizeunits,0)/msInchesPerUnit(map->units,0)) / geo_cellsize;
+    else if(layer->symbolscaledenom > 0 && map->scaledenom > 0)
+      layer->scalefactor = layer->symbolscaledenom/map->scaledenom*map->resolution/map->defresolution;
     else
-      GET_LAYER(map, i)->scalefactor = map->resolution/map->defresolution;
+      layer->scalefactor = map->resolution/map->defresolution;
+    for (int cid=0 ; cid<layer->numclasses ; cid++)
+    {
+      classObj * class = GET_CLASS(map, lid, cid);
+      if (class->sizeunits == MS_INHERIT)
+        class->scalefactor = layer->scalefactor;
+      else if (class->sizeunits != MS_PIXELS)
+        class->scalefactor = (msInchesPerUnit(class->sizeunits,0)/msInchesPerUnit(map->units,0)) / geo_cellsize;
+      else if (layer->symbolscaledenom > 0 && map->scaledenom > 0)
+        class->scalefactor = layer->symbolscaledenom/map->scaledenom*map->resolution/map->defresolution;
+      else
+        class->scalefactor = map->resolution/map->defresolution;
+      for (int sid=0 ; sid<class->numstyles ; sid++)
+      {
+        styleObj * style = class->styles[sid];
+        if (style->sizeunits == MS_INHERIT)
+          style->scalefactor = class->scalefactor;
+        else if (style->sizeunits != MS_PIXELS)
+          style->scalefactor = (msInchesPerUnit(style->sizeunits,0)/msInchesPerUnit(map->units,0)) / geo_cellsize;
+        else if (layer->symbolscaledenom > 0 && map->scaledenom > 0)
+          style->scalefactor = layer->symbolscaledenom/map->scaledenom*map->resolution/map->defresolution;
+        else
+          style->scalefactor = map->resolution/map->defresolution;
+      }
+      for (int sid=0 ; sid<class->numlabels ; sid++)
+      {
+        labelObj * label = class->labels[sid];
+        if (label->sizeunits == MS_INHERIT)
+          label->scalefactor = class->scalefactor;
+        else if (label->sizeunits != MS_PIXELS)
+          label->scalefactor = (msInchesPerUnit(label->sizeunits,0)/msInchesPerUnit(map->units,0)) / geo_cellsize;
+        else if (layer->symbolscaledenom > 0 && map->scaledenom > 0)
+          label->scalefactor = layer->symbolscaledenom/map->scaledenom*map->resolution/map->defresolution;
+        else
+          label->scalefactor = map->resolution/map->defresolution;
+        for (int lsid=0 ; lsid<label->numstyles ; lsid++)
+        {
+          styleObj * lstyle = label->styles[lsid];
+          if (lstyle->sizeunits == MS_INHERIT)
+            lstyle->scalefactor = label->scalefactor;
+          else if (lstyle->sizeunits != MS_PIXELS)
+            lstyle->scalefactor = (msInchesPerUnit(lstyle->sizeunits,0)/msInchesPerUnit(map->units,0)) / geo_cellsize;
+          else if (layer->symbolscaledenom > 0 && map->scaledenom > 0)
+            lstyle->scalefactor = layer->symbolscaledenom/map->scaledenom*map->resolution/map->defresolution;
+          else
+            lstyle->scalefactor = map->resolution/map->defresolution;
+        }
+      }
+    }
   }
 
   image->refpt.x = MS_MAP2IMAGE_X_IC_DBL(0, map->extent.minx, 1.0/map->cellsize);
@@ -228,8 +273,8 @@ imageObj *msDrawMap(mapObj *map, int querymap)
   layerObj *lp=NULL;
   int status = MS_FAILURE;
   imageObj *image = NULL;
-  struct mstimeval mapstarttime, mapendtime;
-  struct mstimeval starttime, endtime;
+  struct mstimeval mapstarttime = {0}, mapendtime = {0};
+  struct mstimeval starttime = {0}, endtime = {0};
 
 #if defined(USE_WMS_LYR) || defined(USE_WFS_LYR)
   enum MS_CONNECTION_TYPE lastconnectiontype;
@@ -242,8 +287,8 @@ imageObj *msDrawMap(mapObj *map, int querymap)
   if(map->debug >= MS_DEBUGLEVEL_TUNING) msGettimeofday(&mapstarttime, NULL);
 
   if(querymap) { /* use queryMapObj image dimensions */
-    if(map->querymap.width != -1) map->width = map->querymap.width;
-    if(map->querymap.height != -1) map->height = map->querymap.height;
+    if(map->querymap.width > 0 && map->querymap.width <= map->maxsize) map->width = map->querymap.width;
+    if(map->querymap.height > 0 && map->querymap.height <= map->maxsize) map->height = map->querymap.height;
   }
 
   msApplyMapConfigOptions(map);
@@ -356,7 +401,7 @@ imageObj *msDrawMap(mapObj *map, int querymap)
   for(i=0; i<map->numlayers; i++) {
 
     if(map->layerorder[i] != -1) {
-      char *force_draw_label_cache = NULL;
+      const char *force_draw_label_cache = NULL;
 
       lp = (GET_LAYER(map,  map->layerorder[i]));
 
@@ -369,8 +414,10 @@ imageObj *msDrawMap(mapObj *map, int querymap)
 
       if(lp->connectiontype == MS_WMS) {
 #ifdef USE_WMS_LYR
-        if(MS_RENDERER_PLUGIN(image->format) || MS_RENDERER_RAWDATA(image->format))
+        if(MS_RENDERER_PLUGIN(image->format) || MS_RENDERER_RAWDATA(image->format)) {
+          assert(pasOWSReqInfo);
           status = msDrawWMSLayerLow(map->layerorder[i], pasOWSReqInfo, numOWSRequests,  map, lp, image);
+        }
         else {
           msSetError(MS_WMSCONNERR, "Output format '%s' doesn't support WMS layers.", "msDrawMap()", image->format->name);
           status = MS_FAILURE;
@@ -506,7 +553,10 @@ imageObj *msDrawMap(mapObj *map, int querymap)
     if(lp->connectiontype == MS_WMS) {
 #ifdef USE_WMS_LYR
       if(MS_RENDERER_PLUGIN(image->format) || MS_RENDERER_RAWDATA(image->format))
+      {
+        assert(pasOWSReqInfo);
         status = msDrawWMSLayerLow(map->layerorder[i], pasOWSReqInfo, numOWSRequests, map, lp, image);
+      }
 
 #else
       status = MS_FAILURE;
@@ -545,8 +595,15 @@ imageObj *msDrawMap(mapObj *map, int querymap)
     msMapRestoreRealExtent(map);
 
   if(map->legend.status == MS_EMBED && map->legend.postlabelcache)
-    if(UNLIKELY(MS_FAILURE == msEmbedLegend(map, image))) {
+    if(MS_UNLIKELY(MS_FAILURE == msEmbedLegend(map, image))) {
       msFreeImage( image );
+#if defined(USE_WMS_LYR) || defined(USE_WFS_LYR)
+      /* Cleanup WMS/WFS Request stuff */
+      if (pasOWSReqInfo) {
+        msHTTPFreeRequestObj(pasOWSReqInfo, numOWSRequests);
+        msFree(pasOWSReqInfo);
+      }
+#endif
       return NULL;
     }
 
@@ -556,7 +613,6 @@ imageObj *msDrawMap(mapObj *map, int querymap)
     /* the scalebar as it uses the extent to recompute cellsize. */
     if(map->gt.need_geotransform)
       msMapRestoreRealExtent(map);
-
 
     if(MS_SUCCESS != msEmbedScalebar(map, image)) {
       msFreeImage( image );
@@ -820,11 +876,11 @@ int msDrawLayer(mapObj *map, layerObj *layer, imageObj *image)
     altrenderer->endLayer(image_draw,map,layer);
 
     retcode = altrenderer->getRasterBufferHandle(image_draw,&rb);
-    if(UNLIKELY(retcode == MS_FAILURE)) {
+    if(MS_UNLIKELY(retcode == MS_FAILURE)) {
       goto altformat_cleanup;
     }
     retcode = renderer->mergeRasterBuffer(image,&rb,((layer->compositer)?(layer->compositer->opacity*0.01):(1.0)),0,0,0,0,rb.width,rb.height);
-    if(UNLIKELY(retcode == MS_FAILURE)) {
+    if(MS_UNLIKELY(retcode == MS_FAILURE)) {
       goto altformat_cleanup;
     }
 
@@ -841,7 +897,7 @@ altformat_cleanup:
     renderer->endLayer(image_draw,map,layer);
 
     retcode = renderer->getRasterBufferHandle(image_draw,&rb);
-    if(UNLIKELY(retcode == MS_FAILURE)) {
+    if(MS_UNLIKELY(retcode == MS_FAILURE)) {
       goto imagedraw_cleanup;
     }
     if(maskLayer && maskLayer->maskimage) {
@@ -849,7 +905,7 @@ altformat_cleanup:
       unsigned int row,col;
       memset(&mask,0,sizeof(rasterBufferObj));
       retcode = MS_IMAGE_RENDERER(maskLayer->maskimage)->getRasterBufferHandle(maskLayer->maskimage,&mask);
-      if(UNLIKELY(retcode == MS_FAILURE)) {
+      if(MS_UNLIKELY(retcode == MS_FAILURE)) {
         goto imagedraw_cleanup;
       }
       /* modify the pixels of the overlay */
@@ -881,7 +937,7 @@ altformat_cleanup:
     } else {
       retcode = msCompositeRasterBuffer(map,image,&rb,layer->compositer);
     }
-    if(UNLIKELY(retcode == MS_FAILURE)) {
+    if(MS_UNLIKELY(retcode == MS_FAILURE)) {
       goto imagedraw_cleanup;
     }
 
@@ -899,6 +955,7 @@ int msDrawVectorLayer(mapObj *map, layerObj *layer, imageObj *image)
   int         drawmode=MS_DRAWMODE_FEATURES;
   char        annotate=MS_TRUE;
   shapeObj    shape;
+  shapeObj    savedShape;
   rectObj     searchrect;
   char        cache=MS_FALSE;
   int         maxnumstyles=1;
@@ -939,112 +996,25 @@ int msDrawVectorLayer(mapObj *map, layerObj *layer, imageObj *image)
   /* identify target shapes */
   if(layer->transform == MS_TRUE) {
     searchrect = map->extent;
-#ifdef USE_PROJ
+
     if((map->projection.numargs > 0) && (layer->projection.numargs > 0)) {
       int bDone = MS_FALSE;
 
-#ifdef USE_GDAL
       if( layer->connectiontype == MS_UVRASTER )
       {
           /* Nasty hack to make msUVRASTERLayerWhichShapes() aware that the */
           /* original area of interest is (map->extent, map->projection)... */
           /* Useful when dealin with UVRASTER that extend beyond 180 deg */
           msUVRASTERLayerUseMapExtentAndProjectionForNextWhichShapes( layer, map );
-      }
-#endif
 
-      /* For UVRaster, it is important that the searchrect is not too large */
-      /* to avoid insufficient intermediate raster resolution, which could */
-      /* happen if we use the default code path, given potential reprojection */
-      /* issues when using a map extent that is not in the validity area of */
-      /* the layer projection. */
-      if( layer->connectiontype == MS_UVRASTER &&
-          !layer->projection.gt.need_geotransform &&
-          !(pj_is_latlong(map->projection.proj) &&
-            pj_is_latlong(layer->projection.proj)) ) {
-        rectObj layer_ori_extent;
-
-        if( msLayerGetExtent(layer, &layer_ori_extent) == MS_SUCCESS ) {
-          projectionObj map_proj;
-
-          double map_extent_minx = map->extent.minx;
-          double map_extent_miny = map->extent.miny;
-          double map_extent_maxx = map->extent.maxx;
-          double map_extent_maxy = map->extent.maxy;
-          rectObj layer_extent = layer_ori_extent;
-
-          /* Create a variant of map->projection without geotransform for */
-          /* conveniency */
-          msInitProjection(&map_proj);
-          msCopyProjection(&map_proj, &map->projection);
-          map_proj.gt.need_geotransform = MS_FALSE;
-          if( map->projection.gt.need_geotransform ) {
-            map_extent_minx = map->projection.gt.geotransform[0]
-                + map->projection.gt.geotransform[1] * map->extent.minx
-                + map->projection.gt.geotransform[2] * map->extent.miny;
-            map_extent_miny = map->projection.gt.geotransform[3]
-                + map->projection.gt.geotransform[4] * map->extent.minx
-                + map->projection.gt.geotransform[5] * map->extent.miny;
-            map_extent_maxx = map->projection.gt.geotransform[0]
-                + map->projection.gt.geotransform[1] * map->extent.maxx
-                + map->projection.gt.geotransform[2] * map->extent.maxy;
-            map_extent_maxy = map->projection.gt.geotransform[3]
-                + map->projection.gt.geotransform[4] * map->extent.maxx
-                + map->projection.gt.geotransform[5] * map->extent.maxy;
-          }
-
-          /* Reproject layer extent to map projection */
-          msProjectRect(&layer->projection, &map_proj, &layer_extent);
-
-          if( layer_extent.minx <= map_extent_minx &&
-              layer_extent.miny <= map_extent_miny &&
-              layer_extent.maxx >= map_extent_maxx &&
-              layer_extent.maxy >= map_extent_maxy ) {
-            /* do nothing special if area to map is inside layer extent */
-          }
-          else {
-            if( layer_extent.minx >= map_extent_minx &&
-                layer_extent.maxx <= map_extent_maxx &&
-                layer_extent.miny >= map_extent_miny &&
-                layer_extent.maxy <= map_extent_maxy ) {
-              /* if the area to map is larger than the layer extent, then */
-              /* use full layer extent and add some margin to reflect the */
-              /* proportion of the useful area over the requested bbox */
-              double extra_x =
-                (map_extent_maxx - map_extent_minx) /
-                  (layer_extent.maxx - layer_extent.minx) *
-                  (layer_ori_extent.maxx -  layer_ori_extent.minx);
-              double extra_y =
-                 (map_extent_maxy - map_extent_miny) /
-                  (layer_extent.maxy - layer_extent.miny) *
-                  (layer_ori_extent.maxy -  layer_ori_extent.miny);
-              searchrect.minx = layer_ori_extent.minx - extra_x / 2;
-              searchrect.maxx = layer_ori_extent.maxx + extra_x / 2;
-              searchrect.miny = layer_ori_extent.miny - extra_y / 2;
-              searchrect.maxy = layer_ori_extent.maxy + extra_y / 2;
-            }
-            else
-            {
-              /* otherwise clip the map extent with the reprojected layer */
-              /* extent */
-              searchrect.minx = MS_MAX( map_extent_minx, layer_extent.minx );
-              searchrect.maxx = MS_MIN( map_extent_maxx, layer_extent.maxx );
-              searchrect.miny = MS_MAX( map_extent_miny, layer_extent.miny );
-              searchrect.maxy = MS_MIN( map_extent_maxy, layer_extent.maxy );
-              /* and reproject into the layer projection */
-              msProjectRect(&map_proj, &layer->projection, &searchrect);
-            }
-            bDone = MS_TRUE;
-          }
-
-          msFreeProjection(&map_proj);
-        }
+          searchrect = msUVRASTERGetSearchRect( layer, map );
+          bDone = MS_TRUE;
       }
 
       if( !bDone )
         msProjectRect(&map->projection, &layer->projection, &searchrect); /* project the searchrect to source coords */
     }
-#endif
+
   } else {
     searchrect.minx = searchrect.miny = 0;
     searchrect.maxx = map->width - map->pixeladjustment;
@@ -1053,12 +1023,10 @@ int msDrawVectorLayer(mapObj *map, layerObj *layer, imageObj *image)
 
   status = msLayerWhichShapes(layer, searchrect, MS_FALSE);
 
-#ifdef USE_GDAL
   if( layer->connectiontype == MS_UVRASTER )
   {
     msUVRASTERLayerUseMapExtentAndProjectionForNextWhichShapes( layer, NULL );
   }
-#endif
 
   if(status == MS_DONE) { /* no overlap */
     msLayerClose(layer);
@@ -1068,9 +1036,6 @@ int msDrawVectorLayer(mapObj *map, layerObj *layer, imageObj *image)
     return MS_FAILURE;
   }
 
-  /* step through the target shapes */
-  msInitShape(&shape);
-
   nclasses = 0;
   classgroup = NULL;
   if(layer->classgroup && layer->numclasses > 0)
@@ -1079,24 +1044,85 @@ int msDrawVectorLayer(mapObj *map, layerObj *layer, imageObj *image)
   if(layer->minfeaturesize > 0)
     minfeaturesize = Pix2LayerGeoref(map, layer, layer->minfeaturesize);
 
-  while((status = msLayerNextShape(layer, &shape)) == MS_SUCCESS) {
+  // Select how to render classes
+  //    MS_FIRST_MATCHING_CLASS: Default and historic MapServer behavior
+  //    MS_ALL_MATCHING_CLASSES: SLD behavior
+  int ref_rendermode;
+  const char * rendermodestr = msLayerGetProcessingKey(layer, "RENDERMODE");
+  if (layer->rendermode == MS_ALL_MATCHING_CLASSES)
+  {
+    // SLD takes precedence
+    ref_rendermode = MS_ALL_MATCHING_CLASSES;
+  }
+  else if (!rendermodestr)
+  {
+    // Default Mapfile
+    ref_rendermode = MS_FIRST_MATCHING_CLASS;
+  }
+  else if (!strcmp(rendermodestr,"FIRST_MATCHING_CLASS"))
+  {
+    // Explicit default Mapfile
+    ref_rendermode = MS_FIRST_MATCHING_CLASS;
+  }
+  else if (!strcmp(rendermodestr,"ALL_MATCHING_CLASSES"))
+  {
+    // SLD-like Mapfile
+    ref_rendermode = MS_ALL_MATCHING_CLASSES;
+  }
+  else
+  {
+    msLayerClose(layer);
+    msSetError(MS_MISCERR,
+    "Unknown RENDERMODE: %s, should be one of: FIRST_MATCHING_CLASS, ALL_MATCHING_CLASSES.",
+    "msDrawVectorLayer()",
+    rendermodestr);
+    return MS_FAILURE;
+  }
 
-    /* Check if the shape size is ok to be drawn */
-    if((shape.type == MS_SHAPE_LINE || shape.type == MS_SHAPE_POLYGON) && (minfeaturesize > 0) && (msShapeCheckSize(&shape, minfeaturesize) == MS_FALSE)) {
-      if(layer->debug >= MS_DEBUGLEVEL_V)
-        msDebug("msDrawVectorLayer(): Skipping shape (%ld) because LAYER::MINFEATURESIZE is bigger than shape size\n", shape.index);
+  /* step through the target shapes and their classes */
+  msInitShape(&shape);
+  int classindex = -1;
+  int classcount = 0;
+  for (;;) {
+    int rendermode;
+    if (classindex == -1) {
       msFreeShape(&shape);
-      continue;
+      status = msLayerNextShape(layer, &shape);
+      if (status != MS_SUCCESS) {
+        break;
+      }
+
+      /* Check if the shape size is ok to be drawn */
+      if((shape.type == MS_SHAPE_LINE || shape.type == MS_SHAPE_POLYGON) && (minfeaturesize > 0) && (msShapeCheckSize(&shape, minfeaturesize) == MS_FALSE)) {
+        if(layer->debug >= MS_DEBUGLEVEL_V)
+          msDebug("msDrawVectorLayer(): Skipping shape (%ld) because LAYER::MINFEATURESIZE is bigger than shape size\n", shape.index);
+        continue;
+      }
+      classcount = 0;
     }
 
-    shape.classindex = msShapeGetClass(layer, map, &shape, classgroup, nclasses);
-    if((shape.classindex == -1) || (layer->class[shape.classindex]->status == MS_OFF)) {
-      msFreeShape(&shape);
+    classindex = msShapeGetNextClass(classindex, layer, map, &shape, classgroup, nclasses);
+    if((classindex == -1) || (layer->class[classindex]->status == MS_OFF)) {
       continue;
+    }
+    shape.classindex = classindex;
+
+    // When only one class is applicable, rendering mode is forced to its default,
+    // i.e. only the first applicable class is actually applied. As a consequence,
+    // cache can be enabled when relevant.
+    classcount++;
+    rendermode = ref_rendermode;
+    if ((classcount == 1) && (msShapeGetNextClass(classindex, layer, map, &shape, classgroup, nclasses) == -1))
+    {
+      rendermode = MS_FIRST_MATCHING_CLASS;
+    }
+
+    if (rendermode == MS_FIRST_MATCHING_CLASS)
+    {
+      classindex = -1;
     }
 
     if(maxfeatures >=0 && featuresdrawn >= maxfeatures) {
-      msFreeShape(&shape);
       status = MS_DONE;
       break;
     }
@@ -1119,19 +1145,24 @@ int msDrawVectorLayer(mapObj *map, layerObj *layer, imageObj *image)
       if(strcasecmp(layer->styleitem, "AUTO") == 0) {
         if(msLayerGetAutoStyle(map, layer, layer->class[shape.classindex], &shape) != MS_SUCCESS) {
           retcode = MS_FAILURE;
-          msFreeShape(&shape);
           break;
         }
       } else {
         /* Generic feature style handling as per RFC-61 */
         if(msLayerGetFeatureStyle(map, layer, layer->class[shape.classindex], &shape) != MS_SUCCESS) {
           retcode = MS_FAILURE;
-          msFreeShape(&shape);
           break;
         }
       }
 
       /* __TODO__ For now, we can't cache features with 'AUTO' style */
+      cache = MS_FALSE;
+    }
+
+    if (rendermode == MS_ALL_MATCHING_CLASSES)
+    {
+      // Cache is designed to handle only one class. Therefore it is
+      // disabled when using SLD "painters model" rendering mode.
       cache = MS_FALSE;
     }
 
@@ -1145,6 +1176,16 @@ int msDrawVectorLayer(mapObj *map, layerObj *layer, imageObj *image)
 
     if (layer->type == MS_LAYER_LINE && msLayerGetProcessingKey(layer, "POLYLINE_NO_CLIP")) {
       drawmode |= MS_DRAWMODE_UNCLIPPEDLINES;
+    }
+
+    if (rendermode == MS_ALL_MATCHING_CLASSES)
+    {
+      // In SLD "painters model" rendering mode, all applicable classes are actually applied.
+      // Coordinates stored in the shape must keep their original values for
+      // the shape to be drawn multiple times.
+      // Here the original shape is saved.
+      msInitShape(&savedShape);
+      msCopyShape(&shape, &savedShape);
     }
 
     if (cache) {
@@ -1173,20 +1214,29 @@ int msDrawVectorLayer(mapObj *map, layerObj *layer, imageObj *image)
 
     else
       status = msDrawShape(map, layer, &shape, image, -1, drawmode); /* all styles  */
-    if(status != MS_SUCCESS) {
+
+    if (rendermode == MS_ALL_MATCHING_CLASSES)
+    {
+      // In SLD "painters model" rendering mode, all applicable classes are actually applied.
+      // Coordinates stored in the shape must keep their original values for
+      // the shape to be drawn multiple times.
+      // Here the original shape is restored.
       msFreeShape(&shape);
+      msCopyShape(&savedShape, &shape);
+      msFreeShape(&savedShape);
+    }
+
+    if(status != MS_SUCCESS) {
       retcode = MS_FAILURE;
       break;
     }
     
     if(shape.numlines == 0) { /* once clipped the shape didn't need to be drawn */
-      msFreeShape(&shape);
       continue;
     }
 
     if(cache) {
       if(insertFeatureList(&shpcache, &shape) == NULL) {
-        msFreeShape(&shape);
         retcode = MS_FAILURE; /* problem adding to the cache */
         break;
       }
@@ -1194,8 +1244,8 @@ int msDrawVectorLayer(mapObj *map, layerObj *layer, imageObj *image)
 
     maxnumstyles = MS_MAX(maxnumstyles, layer->class[shape.classindex]->numstyles);
 
-    msFreeShape(&shape);
   }
+  msFreeShape(&shape);
 
   if (classgroup)
     msFree(classgroup);
@@ -1224,7 +1274,7 @@ int msDrawVectorLayer(mapObj *map, layerObj *layer, imageObj *image)
               continue;
           }
           if(s==0 && pStyle->outlinewidth>0 && MS_VALID_COLOR(pStyle->color)) {
-            if(UNLIKELY(MS_FAILURE == msDrawLineSymbol(map, image, &current->shape, pStyle, layer->scalefactor))) {
+            if(MS_UNLIKELY(MS_FAILURE == msDrawLineSymbol(map, image, &current->shape, pStyle, pStyle->scalefactor))) {
               return MS_FAILURE;
             }
           } else if(s>0) {
@@ -1238,7 +1288,7 @@ int msDrawVectorLayer(mapObj *map, layerObj *layer, imageObj *image)
                *    caching mechanism
                */
 	      msOutlineRenderingPrepareStyle(pStyle, map, layer, image);
-              if(UNLIKELY(MS_FAILURE == msDrawLineSymbol(map, image, &current->shape, pStyle, layer->scalefactor))) {
+              if(MS_UNLIKELY(MS_FAILURE == msDrawLineSymbol(map, image, &current->shape, pStyle, pStyle->scalefactor))) {
                 return MS_FAILURE;
               }
               /*
@@ -1258,7 +1308,7 @@ int msDrawVectorLayer(mapObj *map, layerObj *layer, imageObj *image)
                       )
                     )
               ) {
-              if(UNLIKELY(MS_FAILURE == msDrawLineSymbol(map, image, &current->shape, pStyle, layer->scalefactor)))
+              if(MS_UNLIKELY(MS_FAILURE == msDrawLineSymbol(map, image, &current->shape, pStyle, pStyle->scalefactor)))
                 return MS_FAILURE;
             }
           }
@@ -1282,7 +1332,7 @@ int msDrawQueryLayer(mapObj *map, layerObj *layer, imageObj *image)
 {
   int i, status;
   char annotate=MS_TRUE, cache=MS_FALSE;
-  int drawmode = MS_DRAWMODE_FEATURES|MS_DRAWMODE_QUERY;
+  int drawmode = MS_DRAWMODE_FEATURES;
   shapeObj shape;
   int maxnumstyles=1;
 
@@ -1331,6 +1381,9 @@ int msDrawQueryLayer(mapObj *map, layerObj *layer, imageObj *image)
 
   /* if MS_HILITE, alter the one style (always at least 1 style), and set a MINDISTANCE for the labelObj to avoid duplicates */
   if(map->querymap.style == MS_HILITE) {
+
+    drawmode |= MS_DRAWMODE_QUERY;
+
     if (layer->numclasses > 0) {
       colorbuffer = (colorObj*)msSmallMalloc(layer->numclasses*sizeof(colorObj));
       mindistancebuffer = (int*)msSmallMalloc(layer->numclasses*sizeof(int));
@@ -1338,6 +1391,12 @@ int msDrawQueryLayer(mapObj *map, layerObj *layer, imageObj *image)
 
     for(i=0; i<layer->numclasses; i++) {
       if(layer->type == MS_LAYER_POLYGON && layer->class[i]->numstyles > 0) { /* alter BOTTOM style since that's almost always the fill */
+        if (layer->class[i]->styles == NULL) {
+          msSetError(MS_MISCERR, "Don't know how to draw class %s of layer %s without a style definition.", "msDrawQueryLayer()", layer->class[i]->name, layer->name);
+          msFree(colorbuffer);
+          msFree(mindistancebuffer);
+          return(MS_FAILURE);
+        }
         if(MS_VALID_COLOR(layer->class[i]->styles[0]->color)) {
           colorbuffer[i] = layer->class[i]->styles[0]->color; /* save the color from the BOTTOM style */
           layer->class[i]->styles[0]->color = map->querymap.color;
@@ -1462,20 +1521,20 @@ int msDrawQueryLayer(mapObj *map, layerObj *layer, imageObj *image)
               continue;
           }
           if(s==0 && pStyle->outlinewidth>0 && MS_VALID_COLOR(pStyle->color)) {
-            if(UNLIKELY(MS_FAILURE == msDrawLineSymbol(map, image, &current->shape, pStyle, layer->scalefactor))) {
+            if(MS_UNLIKELY(MS_FAILURE == msDrawLineSymbol(map, image, &current->shape, pStyle, pStyle->scalefactor))) {
               return MS_FAILURE;
             }
           } else if(s>0) {
             if (pStyle->outlinewidth > 0 && MS_VALID_COLOR(pStyle->outlinecolor)) {
               msOutlineRenderingPrepareStyle(pStyle, map, layer, image);
-              if(UNLIKELY(MS_FAILURE == msDrawLineSymbol(map, image, &current->shape, pStyle, layer->scalefactor))) {
+              if(MS_UNLIKELY(MS_FAILURE == msDrawLineSymbol(map, image, &current->shape, pStyle, pStyle->scalefactor))) {
                 return MS_FAILURE;
               }
               msOutlineRenderingRestoreStyle(pStyle, map, layer, image);
             }
             /* draw a valid line, i.e. one with a color defined or of type pixmap */
             if(MS_VALID_COLOR(pStyle->color) || (pStyle->symbol<map->symbolset.numsymbols && (map->symbolset.symbol[pStyle->symbol]->type == MS_SYMBOL_PIXMAP || map->symbolset.symbol[pStyle->symbol]->type == MS_SYMBOL_SVG))) {
-              if(UNLIKELY(MS_FAILURE == msDrawLineSymbol(map, image, &current->shape, pStyle, layer->scalefactor)))
+              if(MS_UNLIKELY(MS_FAILURE == msDrawLineSymbol(map, image, &current->shape, pStyle, pStyle->scalefactor)))
                 return MS_FAILURE;
             }
           }
@@ -1655,10 +1714,8 @@ int circleLayerDrawShape(mapObj *map, imageObj *image, layerObj *layer, shapeObj
 
   if (layer->transform == MS_TRUE) {
 
-#ifdef USE_PROJ
     if (layer->project)
       msProjectPoint(&layer->projection, &map->projection, &center);
-#endif
 
     center.x = MS_MAP2IMAGE_X(center.x, map->extent.minx, map->cellsize);
     center.y = MS_MAP2IMAGE_Y(center.y, map->extent.maxy, map->cellsize);
@@ -1670,8 +1727,8 @@ int circleLayerDrawShape(mapObj *map, imageObj *image, layerObj *layer, shapeObj
     if (msScaleInBounds(map->scaledenom,
                         layer->class[c]->styles[s]->minscaledenom,
                         layer->class[c]->styles[s]->maxscaledenom))
-      if(UNLIKELY(MS_FAILURE == msCircleDrawShadeSymbol(map, image, &center, r,
-                              layer->class[c]->styles[s], layer->scalefactor))) {
+      if(MS_UNLIKELY(MS_FAILURE == msCircleDrawShadeSymbol(map, image, &center, r,
+                              layer->class[c]->styles[s], layer->class[c]->styles[s]->scalefactor))) {
         return MS_FAILURE;
       }
   }
@@ -1679,16 +1736,26 @@ int circleLayerDrawShape(mapObj *map, imageObj *image, layerObj *layer, shapeObj
   /* TODO: need to handle circle annotation */
 }
 
+static
 int pointLayerDrawShape(mapObj *map, imageObj *image, layerObj *layer, shapeObj *shape, int drawmode)
 {
   int l, c = shape->classindex, j, i, s;
   pointObj *point;
   int ret = MS_FAILURE;
 
-#ifdef USE_PROJ
   if (layer->project && layer->transform == MS_TRUE)
-    msProjectShape(&layer->projection, &map->projection, shape);
-#endif
+  {
+      if( layer->reprojectorLayerToMap == NULL )
+      {
+          layer->reprojectorLayerToMap = msProjectCreateReprojector(
+              &layer->projection, &map->projection);
+        if( layer->reprojectorLayerToMap == NULL )
+        {
+            return MS_FAILURE;
+        }
+      }
+      msProjectShapeEx(layer->reprojectorLayerToMap, shape);
+  }
 
   // Only take into account map rotation if the label and style angles are
   // non-zero.
@@ -1721,7 +1788,7 @@ int pointLayerDrawShape(mapObj *map, imageObj *image, layerObj *layer, shapeObj 
           if (msScaleInBounds(map->scaledenom,
               layer->class[c]->styles[s]->minscaledenom,
               layer->class[c]->styles[s]->maxscaledenom))
-            if(UNLIKELY(MS_FAILURE == msDrawMarkerSymbol(map, image, point, layer->class[c]->styles[s], layer->scalefactor))) {
+            if(MS_UNLIKELY(MS_FAILURE == msDrawMarkerSymbol(map, image, point, layer->class[c]->styles[s], layer->class[c]->styles[s]->scalefactor))) {
               goto end;
             }
         }
@@ -1733,7 +1800,7 @@ int pointLayerDrawShape(mapObj *map, imageObj *image, layerObj *layer, shapeObj 
           for (l = 0; l < layer->class[c]->numlabels; l++)
             if(msGetLabelStatus(map,layer,shape,layer->class[c]->labels[l]) == MS_ON) {
               char *annotext = msShapeGetLabelAnnotation(layer,shape,layer->class[c]->labels[l]);
-              if(UNLIKELY(MS_FAILURE == msDrawLabel(map, image, *point, annotext, layer->class[c]->labels[l], layer->scalefactor))) {
+              if(MS_UNLIKELY(MS_FAILURE == msDrawLabel(map, image, *point, annotext, layer->class[c]->labels[l], layer->class[c]->labels[l]->scalefactor))) {
                 goto end;
               }
             }
@@ -1767,22 +1834,21 @@ int lineLayerDrawShape(mapObj *map, imageObj *image, layerObj *layer, shapeObj *
 {
   int c = shape->classindex;
   int ret = MS_SUCCESS;
-  int i, s, l = 0;
 
   /* RFC48: loop through the styles, and pass off to the type-specific
   function if the style has an appropriate type */
   if(MS_DRAW_FEATURES(drawmode)) {
-    for (s = 0; s < layer->class[c]->numstyles; s++) {
+    for (int s = 0; s < layer->class[c]->numstyles; s++) {
       if (msScaleInBounds(map->scaledenom,
           layer->class[c]->styles[s]->minscaledenom,
           layer->class[c]->styles[s]->maxscaledenom)) {
         if (layer->class[c]->styles[s]->_geomtransform.type != MS_GEOMTRANSFORM_NONE) {
-          if(UNLIKELY(MS_FAILURE == msDrawTransformedShape(map, image, unclipped_shape, layer->class[c]->styles[s], layer->scalefactor))) {
+          if(MS_UNLIKELY(MS_FAILURE == msDrawTransformedShape(map, image, unclipped_shape, layer->class[c]->styles[s], layer->class[c]->styles[s]->scalefactor))) {
             return MS_FAILURE;
           }
         }
         else if (!MS_DRAW_SINGLESTYLE(drawmode) || s == style) {
-          if(UNLIKELY(MS_FAILURE == msDrawLineSymbol(map, image, shape, layer->class[c]->styles[s], layer->scalefactor))) {
+          if(MS_UNLIKELY(MS_FAILURE == msDrawLineSymbol(map, image, shape, layer->class[c]->styles[s], layer->class[c]->styles[s]->scalefactor))) {
             return MS_FAILURE;
           }
         }
@@ -1791,7 +1857,7 @@ int lineLayerDrawShape(mapObj *map, imageObj *image, layerObj *layer, shapeObj *
   }
   
   if(MS_DRAW_LABELS(drawmode)) {
-    for (l = 0; l < layer->class[c]->numlabels; l++) {
+    for (int l = 0; l < layer->class[c]->numlabels; l++) {
       labelObj *label = layer->class[c]->labels[l];
       textSymbolObj ts;
       char *annotext;
@@ -1802,7 +1868,7 @@ int lineLayerDrawShape(mapObj *map, imageObj *image, layerObj *layer, shapeObj *
       annotext = msShapeGetLabelAnnotation(layer,anno_shape,label);
       if(!annotext) continue;
       initTextSymbol(&ts);
-      msPopulateTextSymbolForLabelAndString(&ts,label,annotext,layer->scalefactor,image->resolutionfactor, layer->labelcache);
+      msPopulateTextSymbolForLabelAndString(&ts,label,annotext,label->scalefactor,image->resolutionfactor, layer->labelcache);
       
       
       if (label->anglemode == MS_FOLLOW) { /* bug #1620 implementation */
@@ -1817,34 +1883,26 @@ int lineLayerDrawShape(mapObj *map, imageObj *image, layerObj *layer, shapeObj *
         memset(&lfr,0,sizeof(lfr));
         msPolylineLabelPath(map, image, anno_shape, &ts, label, &lfr);
 
-        for (i = 0; i < lfr.num_follow_labels; i++) {
+        for (int i = 0; i < lfr.num_follow_labels; i++) {
           if (msAddLabel(map, image, label, layer->index, c, anno_shape, NULL, -1, lfr.follow_labels[i]) != MS_SUCCESS) {
             ret = MS_FAILURE;
             goto line_cleanup;
           }
         }
         free(lfr.follow_labels);
-        for(i=0; i<lfr.lar.num_label_points; i++) {
+        for(int i=0; i<lfr.lar.num_label_points; i++) {
           textSymbolObj *ts_auto = msSmallMalloc(sizeof(textSymbolObj));
           initTextSymbol(ts_auto);
           msCopyTextSymbol(ts_auto,&ts);
           ts_auto->rotation = lfr.lar.angles[i];
-          if (layer->labelcache) {
+          {
             if (msAddLabel(map, image, label, layer->index, c, anno_shape, &lfr.lar.label_points[i], -1, ts_auto) != MS_SUCCESS) {
               ret = MS_FAILURE;
               free(lfr.lar.angles);
               free(lfr.lar.label_points);
               goto line_cleanup;
             }
-          } else {
-            ret = msDrawTextSymbol(map,image,lfr.lar.label_points[i],ts_auto);
-            freeTextSymbol(ts_auto);
-            free(ts_auto); /* TODO RFC98: could we not re-use the original ts instead of duplicating into ts_auto ?
-                            * we cannot for now, as the rendering code will modify the glyph positions to apply
-                            * the labelpoint and rotation offsets */
-            if(UNLIKELY(MS_FAILURE == ret)) goto line_cleanup;
           }
-          
         }
         free(lfr.lar.angles);
         free(lfr.lar.label_points);
@@ -1852,12 +1910,12 @@ int lineLayerDrawShape(mapObj *map, imageObj *image, layerObj *layer, shapeObj *
         struct label_auto_result lar;
         memset(&lar,0,sizeof(struct label_auto_result));
         ret = msPolylineLabelPoint(map, anno_shape, &ts, label, &lar, image->resolutionfactor);
-        if(UNLIKELY(MS_FAILURE == ret)) goto line_cleanup;
+        if(MS_UNLIKELY(MS_FAILURE == ret)) goto line_cleanup;
 
         if (label->angle != 0)
           label->angle -= map->gt.rotation_angle; /* apply rotation angle */
 
-        for(i=0; i<lar.num_label_points; i++) {
+        for(int i=0; i<lar.num_label_points; i++) {
           textSymbolObj *ts_auto = msSmallMalloc(sizeof(textSymbolObj));
           initTextSymbol(ts_auto);
           msCopyTextSymbol(ts_auto,&ts);
@@ -1873,7 +1931,7 @@ int lineLayerDrawShape(mapObj *map, imageObj *image, layerObj *layer, shapeObj *
             }
           } else {
             if(!ts_auto->textpath) {
-              if(UNLIKELY(MS_FAILURE == msComputeTextPath(map,ts_auto))) {
+              if(MS_UNLIKELY(MS_FAILURE == msComputeTextPath(map,ts_auto))) {
                 ret = MS_FAILURE;
                 free(lar.angles);
                 free(lar.label_points);
@@ -1888,7 +1946,7 @@ int lineLayerDrawShape(mapObj *map, imageObj *image, layerObj *layer, shapeObj *
                             * we cannot for now, as the rendering code will modify the glyph positions to apply
                             * the labelpoint and rotation offsets */
             ts_auto = NULL;
-            if(UNLIKELY(MS_FAILURE == ret)) goto line_cleanup;
+            if(MS_UNLIKELY(MS_FAILURE == ret)) goto line_cleanup;
           }
           
         }
@@ -1914,7 +1972,7 @@ int polygonLayerDrawShape(mapObj *map, imageObj *image, layerObj *layer,
 {
 
   int c = shape->classindex;
-  pointObj annopnt;
+  pointObj annopnt = {0}; // initialize
   int i;
 
   if(MS_DRAW_FEATURES(drawmode)) {
@@ -1922,13 +1980,13 @@ int polygonLayerDrawShape(mapObj *map, imageObj *image, layerObj *layer,
       if (msScaleInBounds(map->scaledenom, layer->class[c]->styles[i]->minscaledenom,
                           layer->class[c]->styles[i]->maxscaledenom)) {
         if (layer->class[c]->styles[i]->_geomtransform.type == MS_GEOMTRANSFORM_NONE) {
-          if(UNLIKELY(MS_FAILURE == msDrawShadeSymbol(map, image, shape, layer->class[c]->styles[i], layer->scalefactor))) {
+          if(MS_UNLIKELY(MS_FAILURE == msDrawShadeSymbol(map, image, shape, layer->class[c]->styles[i], layer->class[c]->styles[i]->scalefactor))) {
             return MS_FAILURE;
           }
         }
         else {
-          if(UNLIKELY(MS_FAILURE == msDrawTransformedShape(map, image, unclipped_shape,
-                                 layer->class[c]->styles[i], layer->scalefactor))) {
+          if(MS_UNLIKELY(MS_FAILURE == msDrawTransformedShape(map, image, unclipped_shape,
+                                 layer->class[c]->styles[i], layer->class[c]->styles[i]->scalefactor))) {
             return MS_FAILURE;
           }
         }
@@ -1951,7 +2009,7 @@ int polygonLayerDrawShape(mapObj *map, imageObj *image, layerObj *layer,
           for (i = 0; i < layer->class[c]->numlabels; i++)
             if(msGetLabelStatus(map,layer,shape,layer->class[c]->labels[i]) == MS_ON) {
               char *annotext = msShapeGetLabelAnnotation(layer,shape,layer->class[c]->labels[i]); /*ownership taken by msDrawLabel, no need to free */
-              if(UNLIKELY(MS_FAILURE == msDrawLabel(map, image, annopnt, annotext, layer->class[c]->labels[i], layer->scalefactor))) {
+              if(MS_UNLIKELY(MS_FAILURE == msDrawLabel(map, image, annopnt, annotext, layer->class[c]->labels[i], layer->class[c]->labels[i]->scalefactor))) {
                 return MS_FAILURE;
               }
             }
@@ -2013,10 +2071,19 @@ int msDrawShape(mapObj *map, layerObj *layer, shapeObj *shape, imageObj *image, 
     return (MS_FAILURE);
   }
 
-#ifdef USE_PROJ
   if (layer->project && layer->transform == MS_TRUE)
-    msProjectShape(&layer->projection, &map->projection, shape);
-#endif
+  {
+      if( layer->reprojectorLayerToMap == NULL )
+      {
+          layer->reprojectorLayerToMap = msProjectCreateReprojector(
+              &layer->projection, &map->projection);
+        if( layer->reprojectorLayerToMap == NULL )
+        {
+            return MS_FAILURE;
+        }
+      }
+      msProjectShapeEx(layer->reprojectorLayerToMap, shape);
+  }
 
   /* check if we'll need the unclipped shape */
   if (shape->type != MS_SHAPE_POINT) {
@@ -2079,7 +2146,7 @@ int msDrawShape(mapObj *map, layerObj *layer, shapeObj *shape, imageObj *image, 
       if(shape->type == MS_SHAPE_POLYGON && !IS_PARALLEL_OFFSET(style->offsety)) {
          maxsize += MS_MAX(fabs(style->offsety),fabs(style->offsetx));
       }
-      clip_buf = MS_MAX(clip_buf,MS_NINT(MS_MAX(maxsize * layer->scalefactor, maxunscaledsize) + 1));
+      clip_buf = MS_MAX(clip_buf,MS_NINT(MS_MAX(maxsize * style->scalefactor, maxunscaledsize) + 1));
     }
 
 
@@ -2196,18 +2263,23 @@ draw_shape_cleanup:
 int msDrawPoint(mapObj *map, layerObj *layer, pointObj *point, imageObj *image, int classindex, char *labeltext)
 {
   int s,ret;
-  classObj *theclass=layer->class[classindex];
+  classObj *theclass=NULL;
   labelObj *label=NULL;
 
-#ifdef USE_PROJ
-  if(layer->transform == MS_TRUE && layer->project)
-    msProjectPoint(&layer->projection, &map->projection, point);
-#endif
-
+  if(layer->transform == MS_TRUE && layer->project && msProjectionsDiffer(&(layer->projection), &(map->projection))) {
+    msProjectPoint(&(layer->projection), &(map->projection), point);
+  }
+  
+  if(classindex > layer->numclasses) {
+    msSetError(MS_MISCERR, "Invalid classindex (%d)", "msDrawPoint()", classindex);
+    return MS_FAILURE; 
+  }
+  theclass = layer->class[classindex];
+  
   if(labeltext && theclass->numlabels > 0) {
     label = theclass->labels[0];
   }
-
+  
   switch(layer->type) {
     case MS_LAYER_POINT:
       if(layer->transform == MS_TRUE) {
@@ -2219,20 +2291,20 @@ int msDrawPoint(mapObj *map, layerObj *layer, pointObj *point, imageObj *image, 
 
       for(s=0; s<theclass->numstyles; s++) {
         if(msScaleInBounds(map->scaledenom, theclass->styles[s]->minscaledenom, theclass->styles[s]->maxscaledenom))
-          if(UNLIKELY(MS_FAILURE == msDrawMarkerSymbol(map, image, point, theclass->styles[s], layer->scalefactor))) {
+          if(MS_UNLIKELY(MS_FAILURE == msDrawMarkerSymbol(map, image, point, theclass->styles[s], theclass->styles[s]->scalefactor))) {
             return MS_FAILURE;
           }
       }
-      if(labeltext && *labeltext) {
+      if(label && labeltext && *labeltext) {
         textSymbolObj *ts = msSmallMalloc(sizeof(textSymbolObj));
         initTextSymbol(ts);
-        msPopulateTextSymbolForLabelAndString(ts, label, msStrdup(labeltext), layer->scalefactor, image->resolutionfactor, layer->labelcache);
+        msPopulateTextSymbolForLabelAndString(ts, label, msStrdup(labeltext), label->scalefactor, image->resolutionfactor, layer->labelcache);
         if(layer->labelcache) {
           if(msAddLabel(map, image, label, layer->index, classindex, NULL, point, -1, ts) != MS_SUCCESS) {
             return(MS_FAILURE);
           }
         } else {
-          if(UNLIKELY(MS_FAILURE == msComputeTextPath(map,ts))) {
+          if(MS_UNLIKELY(MS_FAILURE == msComputeTextPath(map,ts))) {
             freeTextSymbol(ts);
             free(ts);
             return MS_FAILURE;
@@ -2240,7 +2312,7 @@ int msDrawPoint(mapObj *map, layerObj *layer, pointObj *point, imageObj *image, 
           ret = msDrawTextSymbol(map,image,*point,ts);
           freeTextSymbol(ts);
           free(ts); 
-          if(UNLIKELY(ret == MS_FAILURE)) return MS_FAILURE;
+          if(MS_UNLIKELY(ret == MS_FAILURE)) return MS_FAILURE;
         }
       }
       break;
@@ -2257,10 +2329,10 @@ int msDrawPoint(mapObj *map, layerObj *layer, pointObj *point, imageObj *image, 
 int msDrawLabel(mapObj *map, imageObj *image, pointObj labelPnt, char *string, labelObj *label, double scalefactor)
 {
   shapeObj labelPoly;
-  label_bounds lbounds;
+  label_bounds lbounds = {0};
   lineObj labelPolyLine;
   pointObj labelPolyPoints[5];
-  textSymbolObj ts;
+  textSymbolObj ts = {0};
   int needLabelPoly=MS_TRUE;
   int needLabelPoint=MS_TRUE;
   int haveLabelText=MS_TRUE;
@@ -2271,7 +2343,7 @@ int msDrawLabel(mapObj *map, imageObj *image, pointObj labelPnt, char *string, l
   if(haveLabelText) {
     initTextSymbol(&ts);
     msPopulateTextSymbolForLabelAndString(&ts, label, string, scalefactor, image->resolutionfactor, 0);
-    if(UNLIKELY(MS_FAILURE == msComputeTextPath(map,&ts))) {
+    if(MS_UNLIKELY(MS_FAILURE == msComputeTextPath(map,&ts))) {
       freeTextSymbol(&ts);
       return MS_FAILURE;
     }
@@ -2284,14 +2356,14 @@ int msDrawLabel(mapObj *map, imageObj *image, pointObj labelPnt, char *string, l
   labelPoly.line->numpoints = 5;
 
   if(label->position != MS_XY) {
-    pointObj p;
+    pointObj p = {0};
 
     if(label->numstyles > 0) {
       int i;
 
       for(i=0; i<label->numstyles; i++) {
         if(label->styles[i]->_geomtransform.type == MS_GEOMTRANSFORM_LABELPOINT || label->styles[i]->_geomtransform.type == MS_GEOMTRANSFORM_NONE) {
-          if(UNLIKELY(MS_FAILURE == msDrawMarkerSymbol(map, image, &labelPnt, label->styles[i], scalefactor))) {
+          if(MS_UNLIKELY(MS_FAILURE == msDrawMarkerSymbol(map, image, &labelPnt, label->styles[i], scalefactor))) {
             if(haveLabelText)
               freeTextSymbol(&ts);
             return MS_FAILURE;
@@ -2315,7 +2387,7 @@ int msDrawLabel(mapObj *map, imageObj *image, pointObj labelPnt, char *string, l
             needLabelPoly = MS_FALSE;
           }
           if(label->styles[i]->_geomtransform.type == MS_GEOMTRANSFORM_LABELPOLY) {
-            if(UNLIKELY(MS_FAILURE == msDrawShadeSymbol(map, image, &labelPoly, label->styles[i], ts.scalefactor))) {
+            if(MS_UNLIKELY(MS_FAILURE == msDrawShadeSymbol(map, image, &labelPoly, label->styles[i], ts.scalefactor))) {
               freeTextSymbol(&ts);
               return MS_FAILURE;
             }
@@ -2323,7 +2395,7 @@ int msDrawLabel(mapObj *map, imageObj *image, pointObj labelPnt, char *string, l
             pointObj labelCenter;
             labelCenter.x = (lbounds.bbox.maxx + lbounds.bbox.minx)/2;
             labelCenter.y = (lbounds.bbox.maxy + lbounds.bbox.miny)/2;
-            if(UNLIKELY(MS_FAILURE == msDrawMarkerSymbol(map, image, &labelCenter, label->styles[i], scalefactor))) {
+            if(MS_UNLIKELY(MS_FAILURE == msDrawMarkerSymbol(map, image, &labelCenter, label->styles[i], scalefactor))) {
               freeTextSymbol(&ts);
               return MS_FAILURE;
             }
@@ -2343,7 +2415,7 @@ int msDrawLabel(mapObj *map, imageObj *image, pointObj labelPnt, char *string, l
                         label->offsety * ts.scalefactor, ts.rotation, 0, &lbounds);
 
       /* draw the label text */
-      if(UNLIKELY(MS_FAILURE == msDrawTextSymbol(map,image,p,&ts))) {
+      if(MS_UNLIKELY(MS_FAILURE == msDrawTextSymbol(map,image,p,&ts))) {
         freeTextSymbol(&ts);
         return MS_FAILURE;
       }
@@ -2358,7 +2430,7 @@ int msDrawLabel(mapObj *map, imageObj *image, pointObj labelPnt, char *string, l
       for(i=0; i<label->numstyles; i++) {
         if(label->styles[i]->_geomtransform.type == MS_GEOMTRANSFORM_LABELPOINT ||
            label->styles[i]->_geomtransform.type == MS_GEOMTRANSFORM_NONE) {
-          if(UNLIKELY(MS_FAILURE == msDrawMarkerSymbol(map, image, &labelPnt, label->styles[i], scalefactor))) {
+          if(MS_UNLIKELY(MS_FAILURE == msDrawMarkerSymbol(map, image, &labelPnt, label->styles[i], scalefactor))) {
             freeTextSymbol(&ts);
             return MS_FAILURE;
           }
@@ -2380,7 +2452,7 @@ int msDrawLabel(mapObj *map, imageObj *image, pointObj labelPnt, char *string, l
             }
           }
           if(label->styles[i]->_geomtransform.type == MS_GEOMTRANSFORM_LABELPOLY) {
-            if(UNLIKELY(MS_FAILURE == msDrawShadeSymbol(map, image, &labelPoly, label->styles[i], scalefactor))) {
+            if(MS_UNLIKELY(MS_FAILURE == msDrawShadeSymbol(map, image, &labelPoly, label->styles[i], scalefactor))) {
               freeTextSymbol(&ts);
               return MS_FAILURE;
             }
@@ -2388,7 +2460,7 @@ int msDrawLabel(mapObj *map, imageObj *image, pointObj labelPnt, char *string, l
 	    pointObj labelCenter;
             labelCenter.x = (lbounds.bbox.maxx + lbounds.bbox.minx)/2;
             labelCenter.y = (lbounds.bbox.maxy + lbounds.bbox.miny)/2;
-            if(UNLIKELY(MS_FAILURE == msDrawMarkerSymbol(map, image, &labelCenter, label->styles[i], scalefactor))) {
+            if(MS_UNLIKELY(MS_FAILURE == msDrawMarkerSymbol(map, image, &labelCenter, label->styles[i], scalefactor))) {
               freeTextSymbol(&ts);
               return MS_FAILURE;
             }
@@ -2404,7 +2476,7 @@ int msDrawLabel(mapObj *map, imageObj *image, pointObj labelPnt, char *string, l
 
     if(haveLabelText) {
       /* draw the label text */
-      if(UNLIKELY(MS_FAILURE == msDrawTextSymbol(map,image,labelPnt,&ts))) {
+      if(MS_UNLIKELY(MS_FAILURE == msDrawTextSymbol(map,image,labelPnt,&ts))) {
         freeTextSymbol(&ts);
         return MS_FAILURE;
       }
@@ -2686,7 +2758,7 @@ int msDrawOffsettedLabels(imageObj *image, mapObj *map, int priority)
 
         for(ll=0; ll<classPtr->leader->numstyles; ll++) {
           retval = msDrawLineSymbol(map, image,&labelLeader , classPtr->leader->styles[ll], layerPtr->scalefactor);
-          if(UNLIKELY(retval == MS_FAILURE)) {
+          if(MS_UNLIKELY(retval == MS_FAILURE)) {
             goto offset_cleanup;
           }
         }
@@ -2698,12 +2770,12 @@ int msDrawOffsettedLabels(imageObj *image, mapObj *map, int priority)
             for(i=0; i<ts->label->numstyles; i++) {
               if(ts->label->styles[i]->_geomtransform.type == MS_GEOMTRANSFORM_LABELPOINT) {
                 retval = msDrawMarkerSymbol(map, image, &(labelLeader.line->point[1]), ts->label->styles[i], layerPtr->scalefactor);
-                if(UNLIKELY(retval == MS_FAILURE)) {
+                if(MS_UNLIKELY(retval == MS_FAILURE)) {
                   goto offset_cleanup;
                 }
               } else if(ts->label->styles[i]->_geomtransform.type == MS_GEOMTRANSFORM_LABELPOLY) {
                 retval = msDrawLabelBounds(map,image,ts->style_bounds[i],ts->label->styles[i], ts->scalefactor);
-                if(UNLIKELY(retval == MS_FAILURE)) {
+                if(MS_UNLIKELY(retval == MS_FAILURE)) {
                   goto offset_cleanup;
                 }
 	      } else if(ts->label->styles[i]->_geomtransform.type == MS_GEOMTRANSFORM_LABELCENTER) {
@@ -2711,7 +2783,7 @@ int msDrawOffsettedLabels(imageObj *image, mapObj *map, int priority)
                 labelCenter.x = (ts->style_bounds[i]->bbox.maxx + ts->style_bounds[i]->bbox.minx)/2;
                 labelCenter.y = (ts->style_bounds[i]->bbox.maxy + ts->style_bounds[i]->bbox.miny)/2;
                 retval = msDrawMarkerSymbol(map, image, &labelCenter, ts->label->styles[i], layerPtr->scalefactor);
-                if(UNLIKELY(retval == MS_FAILURE)) {
+                if(MS_UNLIKELY(retval == MS_FAILURE)) {
                   goto offset_cleanup;
                 }
               } else {
@@ -2722,7 +2794,7 @@ int msDrawOffsettedLabels(imageObj *image, mapObj *map, int priority)
           }
           if(ts->annotext) {
             retval = msDrawTextSymbol(map,image,ts->annopoint,ts);
-            if(UNLIKELY(retval == MS_FAILURE)) {
+            if(MS_UNLIKELY(retval == MS_FAILURE)) {
               goto offset_cleanup;
             }
           }
@@ -2784,7 +2856,7 @@ int computeMarkerBounds(mapObj *map, pointObj *annopoint, textSymbolObj *ts, lab
       double aox,aoy;
       symbolObj *symbol = map->symbolset.symbol[style->symbol];
       if(msGetMarkerSize(map, style, &sx, &sy, ts->scalefactor) != MS_SUCCESS)
-        return MS_FALSE;
+        return -1; /* real error, different from MS_FALSE, return -1 so we can trap it */
       if(style->angle) {
         pointObj *point = poly->poly->point;
         point[0].x = sx / 2.0;
@@ -2805,7 +2877,7 @@ int computeMarkerBounds(mapObj *map, pointObj *annopoint, textSymbolObj *ts, lab
             point[p].y += aoy;
           }
         }
-        if(style->angle) {
+        {
           double rot = -style->angle * MS_DEG_TO_RAD;
           double sina = sin(rot);
           double cosa = cos(rot);
@@ -2927,7 +2999,7 @@ static int getLabelPositionFromString(char *pszString) {
 int msDrawLabelCache(mapObj *map, imageObj *image)
 {
   int nReturnVal = MS_SUCCESS;
-  struct mstimeval starttime, endtime;
+  struct mstimeval starttime={0}, endtime={0};
 
   if(map->debug >= MS_DEBUGLEVEL_TUNING) msGettimeofday(&starttime, NULL);
 
@@ -2951,7 +3023,7 @@ int msDrawLabelCache(mapObj *map, imageObj *image)
        */
       lineObj labelpoly_line;
       pointObj labelpoly_points[5];
-      label_bounds labelpoly_bounds;
+      label_bounds labelpoly_bounds = {0};
       lineObj  label_marker_line;
       pointObj label_marker_points[5];
       label_bounds label_marker_bounds;
@@ -3007,7 +3079,7 @@ int msDrawLabelCache(mapObj *map, imageObj *image)
             if(cachePtr->status) {
 
 
-              if (UNLIKELY(MS_FAILURE == msDrawTextSymbol(map, image, cachePtr->textsymbols[0]->annopoint /*not used*/, cachePtr->textsymbols[0])))
+              if (MS_UNLIKELY(MS_FAILURE == msDrawTextSymbol(map, image, cachePtr->textsymbols[0]->annopoint /*not used*/, cachePtr->textsymbols[0])))
               {
                 return MS_FAILURE;
               }
@@ -3072,6 +3144,7 @@ int msDrawLabelCache(mapObj *map, imageObj *image)
                   break; /* the marker collided, break from multi-label loop */
                 }
               }
+              if(have_label_marker == -1) return MS_FAILURE; /* error occured (symbol not found, etc...) */
 
               if(textSymbolPtr->annotext) {
                 /*
@@ -3101,7 +3174,7 @@ int msDrawLabelCache(mapObj *map, imageObj *image)
 
                 /* compute label size */
                 if(!textSymbolPtr->textpath) {
-                  if(UNLIKELY(MS_FAILURE == msComputeTextPath(map,textSymbolPtr))) {
+                  if(MS_UNLIKELY(MS_FAILURE == msComputeTextPath(map,textSymbolPtr))) {
                     return MS_FAILURE;
                   }
                 }
@@ -3353,16 +3426,16 @@ int msDrawLabelCache(mapObj *map, imageObj *image)
               /* here's where we draw the label styles */
                 for(i=0; i<textSymbolPtr->label->numstyles; i++) {
                   if(textSymbolPtr->label->styles[i]->_geomtransform.type == MS_GEOMTRANSFORM_LABELPOINT) {
-                    if(UNLIKELY(MS_FAILURE == msDrawMarkerSymbol(map, image, &(cachePtr->point), textSymbolPtr->label->styles[i], textSymbolPtr->scalefactor))) {
+                    if(MS_UNLIKELY(MS_FAILURE == msDrawMarkerSymbol(map, image, &(cachePtr->point), textSymbolPtr->label->styles[i], textSymbolPtr->scalefactor))) {
                       return MS_FAILURE;
                     }
                   } else if(textSymbolPtr->annotext && textSymbolPtr->label->styles[i]->_geomtransform.type == MS_GEOMTRANSFORM_LABELPOLY) {
                     if(textSymbolPtr->style_bounds && textSymbolPtr->style_bounds[i]) {
-                      if(UNLIKELY(MS_FAILURE == msDrawLabelBounds(map,image,textSymbolPtr->style_bounds[i],textSymbolPtr->label->styles[i], textSymbolPtr->scalefactor))) {
+                      if(MS_UNLIKELY(MS_FAILURE == msDrawLabelBounds(map,image,textSymbolPtr->style_bounds[i],textSymbolPtr->label->styles[i], textSymbolPtr->scalefactor))) {
                         return MS_FAILURE;
                       }
                     } else {
-                      if(UNLIKELY(MS_FAILURE == msDrawLabelBounds(map,image,&labelpoly_bounds,textSymbolPtr->label->styles[i], textSymbolPtr->scalefactor))) {
+                      if(MS_UNLIKELY(MS_FAILURE == msDrawLabelBounds(map,image,&labelpoly_bounds,textSymbolPtr->label->styles[i], textSymbolPtr->scalefactor))) {
                         return MS_FAILURE;
                       }
                     }
@@ -3372,13 +3445,13 @@ int msDrawLabelCache(mapObj *map, imageObj *image)
                     if(textSymbolPtr->style_bounds && textSymbolPtr->style_bounds[i]) {
                       labelCenter.x = (textSymbolPtr->style_bounds[i]->bbox.maxx + textSymbolPtr->style_bounds[i]->bbox.minx)/2;
                       labelCenter.y = (textSymbolPtr->style_bounds[i]->bbox.maxy + textSymbolPtr->style_bounds[i]->bbox.miny)/2;
-                      if(UNLIKELY(MS_FAILURE == msDrawMarkerSymbol(map,image,&labelCenter,textSymbolPtr->label->styles[i], textSymbolPtr->scalefactor))) {
+                      if(MS_UNLIKELY(MS_FAILURE == msDrawMarkerSymbol(map,image,&labelCenter,textSymbolPtr->label->styles[i], textSymbolPtr->scalefactor))) {
                         return MS_FAILURE;
                       }
                     } else {
                       labelCenter.x = (labelpoly_bounds.bbox.maxx + labelpoly_bounds.bbox.minx)/2;
                       labelCenter.y = (labelpoly_bounds.bbox.maxy + labelpoly_bounds.bbox.miny)/2;
-                      if(UNLIKELY(MS_FAILURE == msDrawMarkerSymbol(map,image,&labelCenter,textSymbolPtr->label->styles[i], textSymbolPtr->scalefactor))) {
+                      if(MS_UNLIKELY(MS_FAILURE == msDrawMarkerSymbol(map,image,&labelCenter,textSymbolPtr->label->styles[i], textSymbolPtr->scalefactor))) {
                         return MS_FAILURE;
                       }
                     }
@@ -3390,14 +3463,14 @@ int msDrawLabelCache(mapObj *map, imageObj *image)
                 }
               
               if(textSymbolPtr->annotext) {
-                if(UNLIKELY(MS_FAILURE == msDrawTextSymbol(map,image,textSymbolPtr->annopoint,textSymbolPtr))) {
+                if(MS_UNLIKELY(MS_FAILURE == msDrawTextSymbol(map,image,textSymbolPtr->annopoint,textSymbolPtr))) {
                   return MS_FAILURE;
                 }
               }
             }
           }
         } /* next label(group) from cacheslot */
-        if(UNLIKELY(MS_FAILURE == msDrawOffsettedLabels(image, map, priority))) {
+        if(MS_UNLIKELY(MS_FAILURE == msDrawOffsettedLabels(image, map, priority))) {
           return MS_FAILURE;
         }
       } /* next priority */
@@ -3450,7 +3523,7 @@ void msImageStartLayer(mapObj *map, layerObj *layer, imageObj *image)
 {
   if (image) {
     if( MS_RENDERER_PLUGIN(image->format) ) {
-      char *approximation_scale = msLayerGetProcessingKey( layer, "APPROXIMATION_SCALE" );
+      const char *approximation_scale = msLayerGetProcessingKey( layer, "APPROXIMATION_SCALE" );
       if(approximation_scale) {
         if(!strncasecmp(approximation_scale,"ROUND",5)) {
           MS_IMAGE_RENDERER(image)->transform_mode = MS_TRANSFORM_ROUND;
@@ -3496,6 +3569,8 @@ void msImageEndLayer(mapObj *map, layerObj *layer, imageObj *image)
 void msDrawStartShape(mapObj *map, layerObj *layer, imageObj *image,
                       shapeObj *shape)
 {
+  (void)map;
+  (void)layer;
   if (image) {
     if(MS_RENDERER_PLUGIN(image->format)) {
       if (image->format->vtable->startShape)
@@ -3515,6 +3590,8 @@ void msDrawStartShape(mapObj *map, layerObj *layer, imageObj *image,
 void msDrawEndShape(mapObj *map, layerObj *layer, imageObj *image,
                     shapeObj *shape)
 {
+  (void)map;
+  (void)layer;
   if(MS_RENDERER_PLUGIN(image->format)) {
     if (image->format->vtable->endShape)
       image->format->vtable->endShape(image, shape);
@@ -3526,17 +3603,13 @@ void msDrawEndShape(mapObj *map, layerObj *layer, imageObj *image,
  */
 int msShapeToRange(styleObj *style, shapeObj *shape)
 {
-  double fieldVal;
-  char* fieldStr;
-
   /*first, get the value of the rangeitem, which should*/
   /*evaluate to a double*/
-  fieldStr = shape->values[style->rangeitemindex];
+  const char* fieldStr = shape->values[style->rangeitemindex];
   if (fieldStr == NULL) { /*if there's not value, bail*/
     return MS_FAILURE;
   }
-  fieldVal = 0.0;
-  fieldVal = atof(fieldStr); /*faith that it's ok -- */
+  double fieldVal = atof(fieldStr); /*faith that it's ok -- */
   /*should switch to strtod*/
   return msValueToRange(style, fieldVal, MS_COLORSPACE_RGB);
 }

@@ -12,9 +12,8 @@ build utilities (make on unixes, visual studio on windows, xcode on osx, etc...)
 Install CMake
 -------------
 
-MapServer requires at least CMake version 2.6.0, although the build process with
-such an old version has not been thouroughly tested. 2.8.0 and above are 
-recommended.
+MapServer now requires at least CMake version 3.0, although the CMake process was
+first implemented in MapServer 6.4 with CMake 2.6.0.
 
 Distro Packaged Version
 .......................
@@ -169,7 +168,6 @@ you know what you are doing:
  - option(LINK_STATIC_LIBMAPSERVER "Link to static version of libmapserver (also for mapscripts)" OFF)
  - option(WITH_APACHE_MODULE "include (experimental) support for apache module" OFF)
  - option(WITH_GENERIC_NINT "generic rounding" OFF)
- - option(WITH_POINT_Z_M "include Z and M coordinates in point structure (advanced, not recommended)" OFF)
 
 The following are some common CMake options not specific to MapServer itself:
 

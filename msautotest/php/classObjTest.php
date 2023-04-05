@@ -1,10 +1,10 @@
 <?php
 
-class ClassObjTest extends PHPUnit_Framework_TestCase
+class classObjTest extends \PHPUnit\Framework\TestCase
 {
     protected $class;
 
-    public function setUp()
+    public function setUp(): void
     {
         $map_file = 'maps/labels-leader.map';
         $map = new mapObj($map_file);
@@ -26,10 +26,24 @@ class ClassObjTest extends PHPUnit_Framework_TestCase
 
     }
 
-    public function testpleader()
+    public function testleader()
     {
         $this->assertInstanceOf('labelLeaderObj', $this->class->leader);
     }
+    
+    public function testcreateLegendIcon()
+    {
+        $map_file = 'maps/labels-leader.map';
+        $map = new mapObj($map_file);
+        $layer = $map->getLayer(0);       
+        $this->assertInstanceOf('imageObj', $layer->getClass(0)->createLegendIcon( $map, $layer, 50, 50 ));
+    }    
+    
+    # destroy variables, if not can lead to segmentation fault
+    public function tearDown(): void {
+        unset($this->class, $map_file, $map, $layer, $classtmp, $style);
+    }
+    
 }
 
 ?>

@@ -34,7 +34,7 @@
 
 #if defined(USE_LIBXML2)
 #include "maplibxml2.h"
-#elif defined(USE_GDAL)
+#else
 #include "cpl_minixml.h"
 #include "cpl_error.h"
 #endif
@@ -50,10 +50,12 @@
 ** msOWSInitRequestObj() initializes an owsRequestObj; i.e: sets
 ** all internal pointers to NULL.
 */
-static void msOWSInitRequestObj(owsRequestObj *ows_request)
+void msOWSInitRequestObj(owsRequestObj *ows_request)
 {
   ows_request->numlayers = 0;
+  ows_request->numwmslayerargs = 0;
   ows_request->enabled_layers = NULL;
+  ows_request->layerwmsfilterindex = NULL;
 
   ows_request->service = NULL;
   ows_request->version = NULL;
@@ -65,9 +67,10 @@ static void msOWSInitRequestObj(owsRequestObj *ows_request)
 ** msOWSClearRequestObj() releases all resources associated with an
 ** owsRequestObj.
 */
-static void msOWSClearRequestObj(owsRequestObj *ows_request)
+void msOWSClearRequestObj(owsRequestObj *ows_request)
 {
   msFree(ows_request->enabled_layers);
+  msFree(ows_request->layerwmsfilterindex);
   msFree(ows_request->service);
   msFree(ows_request->version);
   msFree(ows_request->request);
@@ -75,7 +78,7 @@ static void msOWSClearRequestObj(owsRequestObj *ows_request)
 #if defined(USE_LIBXML2)
     xmlFreeDoc(ows_request->document);
     xmlCleanupParser();
-#elif defined(USE_GDAL)
+#else
     CPLDestroyXMLNode(ows_request->document);
 #endif
   }
@@ -136,7 +139,7 @@ static int msOWSPreParseRequest(cgiRequestObj *request,
 #if LIBXML_VERSION < 20900
     xmlExternalEntityLoader oldExternalEntityLoader;
 #endif
-#elif defined(USE_GDAL)
+#else
     CPLXMLNode *temp;
 #endif
     if (!request->postrequest || !strlen(request->postrequest)) {
@@ -172,11 +175,21 @@ static int msOWSPreParseRequest(cgiRequestObj *request,
     }
 
     /* Get service, version and request from root */
-    ows_request->service = (char *) xmlGetProp(root, BAD_CAST "service");
-    ows_request->version = (char *) xmlGetProp(root, BAD_CAST "version");
+    xmlChar* serviceTmp = xmlGetProp(root, BAD_CAST "service");
+    if (serviceTmp != NULL) {
+        ows_request->service = msStrdup((char *) serviceTmp);
+        xmlFree(serviceTmp);
+    }
+
+    xmlChar* versionTmp = xmlGetProp(root, BAD_CAST "version");
+    if (versionTmp != NULL) {
+        ows_request->version = msStrdup((char *) versionTmp);
+        xmlFree(versionTmp);
+    }
+
     ows_request->request = msStrdup((char *) root->name);
 
-#elif defined(USE_GDAL)
+#else
     /* parse with CPLXML */
     ows_request->document = CPLParseXMLString(request->postrequest);
     if (ows_request->document == NULL) {
@@ -204,12 +217,6 @@ static int msOWSPreParseRequest(cgiRequestObj *request,
         continue;
       }
     }
-#else
-    /* could not parse XML since no parser was compiled */
-    msSetError(MS_OWSERR, "Could not parse the POST XML since MapServer"
-               "was not compiled with libxml2 or GDAL.",
-               "msOWSPreParseRequest()");
-    return MS_FAILURE;
 #endif /* defined(USE_LIBXML2) */
   } else {
     msSetError(MS_OWSERR, "Unknown request method. Use either GET or POST.",
@@ -264,11 +271,13 @@ int msOWSDispatch(mapObj *map, cgiRequestObj *request, int ows_mode)
   }
 
   if (ows_request.service == NULL) {
+#ifdef USE_LIBXML2
     if (ows_request.request && EQUAL(ows_request.request, "GetMetadata")) {
-      status = msMetadataDispatch(map, request, &ows_request);
+      status = msMetadataDispatch(map, request);
       msOWSClearRequestObj(&ows_request);
       return status;
     }
+#endif
 #ifdef USE_WFS_SVR
     if( msOWSLookupMetadata(&(map->web.metadata), "FO", "cite_wfs2") != NULL ) {
       status = msWFSException(map, "service", MS_OWS_ERROR_MISSING_PARAMETER_VALUE, NULL );
@@ -756,8 +765,6 @@ int msOWSParseRequestMetadata(const char *metadata, const char *request, int *di
   int disableFlag = MS_FALSE;
   int allFlag = MS_FALSE;
   char *bufferPtr, *ptr = NULL;
-  int i;
-  size_t len = 0;
 
   *disabled = MS_FALSE;
 
@@ -765,11 +772,11 @@ int msOWSParseRequestMetadata(const char *metadata, const char *request, int *di
     return MS_FALSE;
 
   ptr = (char*)metadata;
-  len = strlen(ptr);
+  const size_t len = strlen(ptr);
   requestBuffer[0] = '\0';
   bufferPtr = requestBuffer;
 
-  for (i=0; i<=len; ++i,++ptr) {
+  for (size_t i=0; i<=len; ++i,++ptr) {
 
     if (!wordFlag && isspace(*ptr))
       continue;
@@ -810,6 +817,37 @@ int msOWSParseRequestMetadata(const char *metadata, const char *request, int *di
 }
 
 /*
+** msOWSGetPrefixFromNamespace()
+**
+** Return the metadata name prefix from a character identifying the OWS
+** namespace.
+*/
+static
+const char* msOWSGetPrefixFromNamespace(char chNamespace)
+{
+    // Return should be a 3 character string, otherwise breaks assumption
+    // in msOWSLookupMetadata()
+    switch( chNamespace )
+    {
+        case 'O': return "ows";
+        case 'A': return "oga"; /* oga_... (OGC Geospatial API) */
+        case 'M': return "wms";
+        case 'F': return "wfs";
+        case 'C': return "wcs";
+        case 'G': return "gml";
+        case 'S': return "sos";
+        default:
+          /* We should never get here unless an invalid code (typo) is */
+          /* present in the code, but since this happened before... */
+          msSetError(MS_WMSERR,
+                     "Unsupported metadata namespace code (%c).",
+                     "msOWSGetPrefixFromNamespace()", chNamespace );
+          assert(MS_FALSE);
+          return NULL;
+    }
+}
+
+/*
 ** msOWSLookupMetadata()
 **
 ** Attempts to lookup a given metadata name in multiple OWS namespaces.
@@ -832,47 +870,11 @@ const char *msOWSLookupMetadata(hashTableObj *metadata,
     strlcpy(buf+4, name, 96);
 
     while (value == NULL && *namespaces != '\0') {
-      switch (*namespaces) {
-        case 'O':         /* ows_... */
-          buf[0] = 'o';
-          buf[1] = 'w';
-          buf[2] = 's';
-          break;
-        case 'M':         /* wms_... */
-          buf[0] = 'w';
-          buf[1] = 'm';
-          buf[2] = 's';
-          break;
-        case 'F':         /* wfs_... */
-          buf[0] = 'w';
-          buf[1] = 'f';
-          buf[2] = 's';
-          break;
-        case 'C':         /* wcs_... */
-          buf[0] = 'w';
-          buf[1] = 'c';
-          buf[2] = 's';
-          break;
-        case 'G':         /* gml_... */
-          buf[0] = 'g';
-          buf[1] = 'm';
-          buf[2] = 'l';
-          break;
-        case 'S':         /* sos_... */
-          buf[0] = 's';
-          buf[1] = 'o';
-          buf[2] = 's';
-          break;
-        default:
-          /* We should never get here unless an invalid code (typo) is */
-          /* present in the code, but since this happened before... */
-          msSetError(MS_WMSERR,
-                     "Unsupported metadata namespace code (%c).",
-                     "msOWSLookupMetadata()", *namespaces );
-          assert(MS_FALSE);
+      const char* prefix = msOWSGetPrefixFromNamespace(*namespaces);
+      if( prefix == NULL )
           return NULL;
-      }
-
+      assert(strlen(prefix) == 3);
+      memcpy(buf, prefix, 3);
       value = msLookupHashTable(metadata, buf);
       namespaces++;
     }
@@ -893,7 +895,7 @@ const char *msOWSLookupMetadataWithLanguage(hashTableObj *metadata,
 {
   const char *value = NULL;
 
-  if ( name && validated_language ) {
+  if ( name && validated_language && validated_language[0] ) {
     size_t bufferSize = strlen(name)+strlen(validated_language)+2;
     char *name2 = (char *) msSmallMalloc( bufferSize );
     snprintf(name2, bufferSize, "%s.%s", name, validated_language);
@@ -996,11 +998,249 @@ const char *msOWSGetVersionString(int nVersion, char *pszBuffer)
 }
 
 
-#if defined(USE_WMS_SVR) || defined (USE_WFS_SVR) || defined (USE_WCS_SVR) || defined(USE_SOS_SVR) || defined(USE_WMS_LYR) || defined(USE_WFS_LYR)
+/*
+** msOWSGetEPSGProj()
+**
+** Extract projection code for this layer/map.
+**
+** First look for a xxx_srs metadata. If not found then look for an EPSG
+** code in projectionObj, and if not found then return NULL.
+**
+** If bReturnOnlyFirstOne=TRUE and metadata contains multiple EPSG codes
+** then only the first one (which is assumed to be the layer's default
+** projection) is returned.
+*/
+void msOWSGetEPSGProj(projectionObj *proj, hashTableObj *metadata, const char *namespaces, int bReturnOnlyFirstOne, char **epsgCode)
+{
+  const char *value;
+  *epsgCode = NULL;
 
-#if !defined(USE_PROJ)
-#error "PROJ.4 is required for WMS, WFS, WCS and SOS Server Support."
-#endif
+  /* metadata value should already be in format "EPSG:n" or "AUTO:..." */
+  if (metadata && ((value = msOWSLookupMetadata(metadata, namespaces, "srs")) != NULL)) {
+    const char *space_ptr;
+    if (!bReturnOnlyFirstOne || (space_ptr = strchr(value,' ')) == NULL) {
+      *epsgCode = msStrdup(value);
+      return;
+    }
+    
+
+    *epsgCode = msSmallMalloc((space_ptr - value + 1)*sizeof(char));
+    /* caller requested only first projection code, copy up to the first space character*/
+    strlcpy(*epsgCode, value, space_ptr - value + 1) ;
+    return;
+  } else if (proj && proj->numargs > 0 && (value = strstr(proj->args[0], "init=epsg:")) != NULL) {
+    *epsgCode = msSmallMalloc((strlen("EPSG:")+strlen(value+10)+1)*sizeof(char));
+    sprintf(*epsgCode, "EPSG:%s", value+10);
+    return;
+  } else if (proj && proj->numargs > 0 && (value = strstr(proj->args[0], "init=crs:")) != NULL) {
+    *epsgCode = msSmallMalloc((strlen("CRS:")+strlen(value+9)+1)*sizeof(char));
+    sprintf(*epsgCode, "CRS:%s", value+9);
+    return;
+  } else if (proj && proj->numargs > 0 && (strncasecmp(proj->args[0], "AUTO:", 5) == 0 ||
+             strncasecmp(proj->args[0], "AUTO2:", 6) == 0)) {
+    *epsgCode = msStrdup(proj->args[0]);
+    return;
+  }
+}
+
+/*
+** msOWSProjectToWGS84()
+**
+** Reprojects the extent to WGS84.
+**
+*/
+void msOWSProjectToWGS84(projectionObj *srcproj, rectObj *ext)
+{
+  if (srcproj->proj && !msProjIsGeographicCRS(srcproj)) {
+    projectionObj wgs84;
+    msInitProjection(&wgs84);
+    msProjectionInheritContextFrom(&wgs84, srcproj);
+    msLoadProjectionString(&wgs84, "+proj=longlat +ellps=WGS84 +datum=WGS84");
+    msProjectRect(srcproj, &wgs84, ext);
+    msFreeProjection(&wgs84);
+  }
+}
+
+/* msOWSGetLanguage()
+**
+** returns the language via MAP/WEB/METADATA/ows_language
+**
+** Use value of "ows_language" metadata, if not set then
+** return "undefined" as a default
+*/
+const char *msOWSGetLanguage(mapObj *map, const char *context)
+{
+  const char *language;
+
+  /* if this is an exception, MapServer always returns Exception
+     messages in en-US
+  */
+  if (strcmp(context,"exception") == 0) {
+    language = MS_ERROR_LANGUAGE;
+  }
+  /* if not, fetch language from mapfile metadata */
+  else {
+    language = msLookupHashTable(&(map->web.metadata), "ows_language");
+
+    if (language == NULL) {
+      language = "undefined";
+    }
+  }
+  return language;
+}
+
+/* msOWSGetSchemasLocation()
+**
+** schemas location is the root of the web tree where all WFS-related
+** schemas can be found on this server.  These URLs must exist in order
+** to validate xml.
+**
+** Use value of "ows_schemas_location" metadata, if not set then
+** return ".." as a default
+*/
+const char *msOWSGetSchemasLocation(mapObj *map)
+{
+  const char *schemas_location;
+
+  schemas_location = msLookupHashTable(&(map->web.metadata),
+                                       "ows_schemas_location");
+  if (schemas_location == NULL)
+    schemas_location = OWS_DEFAULT_SCHEMAS_LOCATION;
+
+  return schemas_location;
+}
+
+/*
+** msOWSGetExpandedMetadataKey()
+*/
+static
+char* msOWSGetExpandedMetadataKey(const char *namespaces, const char *metadata_name)
+{
+  char* pszRet = msStringConcatenate(NULL, "");
+  for( int i = 0; namespaces[i] != '\0'; ++i )
+  {
+      if( i > 0 )
+          pszRet = msStringConcatenate(pszRet, " or ");
+      pszRet = msStringConcatenate(pszRet, "\"");
+      pszRet = msStringConcatenate(pszRet, msOWSGetPrefixFromNamespace(namespaces[i]));
+      pszRet = msStringConcatenate(pszRet, "_");
+      pszRet = msStringConcatenate(pszRet, metadata_name);
+      pszRet = msStringConcatenate(pszRet, "\"");
+  }
+  return pszRet;
+}
+
+/*
+** msOWSGetOnlineResource()
+**
+** Return the online resource for this service.  First try to lookup
+** specified metadata, and if not found then try to build the URL ourselves.
+**
+** Returns a newly allocated string that should be freed by the caller or
+** NULL in case of error.
+*/
+char * msOWSGetOnlineResource(mapObj *map, const char *namespaces, const char *metadata_name,
+                              cgiRequestObj *req)
+{
+  const char *value;
+  char *online_resource = NULL;
+
+  /* We need this script's URL, including hostname. */
+  /* Default to use the value of the "onlineresource" metadata, and if not */
+  /* set then build it: "http://$(SERVER_NAME):$(SERVER_PORT)$(SCRIPT_NAME)?" */
+  /* (+append the map=... param if it was explicitly passed in QUERY_STRING) */
+  /*  */
+  if ((value = msOWSLookupMetadata(&(map->web.metadata), namespaces, metadata_name))) {
+    online_resource = msOWSTerminateOnlineResource(value);
+  } else {
+    if ((online_resource = msBuildOnlineResource(map, req)) == NULL) {
+      char* pszExpandedMetadataKey = msOWSGetExpandedMetadataKey(namespaces, metadata_name);
+      msSetError(MS_CGIERR, "Please set %s metadata.", "msOWSGetOnlineResource()", pszExpandedMetadataKey);
+      msFree(pszExpandedMetadataKey);
+      return NULL;
+    }
+  }
+
+  return online_resource;
+}
+
+/*
+** msOWSTerminateOnlineResource()
+**
+** Append trailing "?" or "&" to an onlineresource URL if it doesn't have
+** one already. The returned string is then ready to append GET parameters
+** to it.
+**
+** Returns a newly allocated string that should be freed by the caller or
+** NULL in case of error.
+*/
+char * msOWSTerminateOnlineResource(const char *src_url)
+{
+  char *online_resource = NULL;
+  size_t buffer_size = 0;
+
+  if (src_url == NULL)
+    return NULL;
+
+  buffer_size = strlen(src_url)+2;
+  online_resource = (char*) malloc(buffer_size);
+
+  if (online_resource == NULL) {
+    msSetError(MS_MEMERR, NULL, "msOWSTerminateOnlineResource()");
+    return NULL;
+  }
+
+  strlcpy(online_resource, src_url, buffer_size);
+
+  /* Append trailing '?' or '&' if missing. */
+  if (strchr(online_resource, '?') == NULL)
+    strlcat(online_resource, "?", buffer_size);
+  else {
+    char *c;
+    c = online_resource+strlen(online_resource)-1;
+    if (*c != '?' && *c != '&')
+      strlcpy(c+1, "&", buffer_size-strlen(online_resource));
+  }
+
+  return online_resource;
+}
+
+/************************************************************************/
+/*                         msUpdateGMLFieldMetadata                     */
+/*                                                                      */
+/*      Updates a fields GML metadata if it has not already             */
+/*      been set. Nullable is not implemented for all drivers           */
+/*      and can be set to 0 if unknown                                  */
+/************************************************************************/
+int msUpdateGMLFieldMetadata(layerObj *layer, const char *field_name, const char *gml_type,
+                             const char *gml_width, const char *gml_precision, const short nullable)
+{
+
+    char md_item_name[256];
+
+    snprintf( md_item_name, sizeof(md_item_name), "gml_%s_type", field_name );
+    if( msLookupHashTable(&(layer->metadata), md_item_name) == NULL )
+    msInsertHashTable(&(layer->metadata), md_item_name, gml_type );
+
+    snprintf( md_item_name, sizeof(md_item_name), "gml_%s_width", field_name );
+    if( strlen(gml_width) > 0
+        && msLookupHashTable(&(layer->metadata), md_item_name) == NULL )
+    msInsertHashTable(&(layer->metadata), md_item_name, gml_width );
+
+    snprintf( md_item_name, sizeof(md_item_name), "gml_%s_precision", field_name );
+    if( strlen(gml_precision) > 0
+        && msLookupHashTable(&(layer->metadata), md_item_name) == NULL )
+    msInsertHashTable(&(layer->metadata), md_item_name, gml_precision );
+
+    snprintf( md_item_name, sizeof(md_item_name), "gml_%s_nillable", field_name );
+    if( nullable > 0 
+        && msLookupHashTable(&(layer->metadata), md_item_name) == NULL )
+    msInsertHashTable(&(layer->metadata), md_item_name, "true" );
+
+    return MS_TRUE;
+}
+
+#if defined(USE_WMS_SVR) || defined (USE_WFS_SVR) || defined (USE_WCS_SVR) || defined(USE_SOS_SVR) || defined(USE_WMS_LYR) || defined(USE_WFS_LYR)
 
 /*
 ** msRenameLayer()
@@ -1082,80 +1322,6 @@ int msOWSNegotiateVersion(int requested_version, const int supported_versions[],
 }
 
 /*
-** msOWSTerminateOnlineResource()
-**
-** Append trailing "?" or "&" to an onlineresource URL if it doesn't have
-** one already. The returned string is then ready to append GET parameters
-** to it.
-**
-** Returns a newly allocated string that should be freed by the caller or
-** NULL in case of error.
-*/
-char * msOWSTerminateOnlineResource(const char *src_url)
-{
-  char *online_resource = NULL;
-  size_t buffer_size = 0;
-
-  if (src_url == NULL)
-    return NULL;
-
-  buffer_size = strlen(src_url)+2;
-  online_resource = (char*) malloc(buffer_size);
-
-  if (online_resource == NULL) {
-    msSetError(MS_MEMERR, NULL, "msOWSTerminateOnlineResource()");
-    return NULL;
-  }
-
-  strlcpy(online_resource, src_url, buffer_size);
-
-  /* Append trailing '?' or '&' if missing. */
-  if (strchr(online_resource, '?') == NULL)
-    strlcat(online_resource, "?", buffer_size);
-  else {
-    char *c;
-    c = online_resource+strlen(online_resource)-1;
-    if (*c != '?' && *c != '&')
-      strlcpy(c+1, "&", buffer_size-strlen(online_resource));
-  }
-
-  return online_resource;
-}
-
-/*
-** msOWSGetOnlineResource()
-**
-** Return the online resource for this service.  First try to lookup
-** specified metadata, and if not found then try to build the URL ourselves.
-**
-** Returns a newly allocated string that should be freed by the caller or
-** NULL in case of error.
-*/
-char * msOWSGetOnlineResource(mapObj *map, const char *namespaces, const char *metadata_name,
-                              cgiRequestObj *req)
-{
-  const char *value;
-  char *online_resource = NULL;
-
-  /* We need this script's URL, including hostname. */
-  /* Default to use the value of the "onlineresource" metadata, and if not */
-  /* set then build it: "http://$(SERVER_NAME):$(SERVER_PORT)$(SCRIPT_NAME)?" */
-  /* (+append the map=... param if it was explicitly passed in QUERY_STRING) */
-  /*  */
-  if ((value = msOWSLookupMetadata(&(map->web.metadata), namespaces, metadata_name))) {
-    online_resource = msOWSTerminateOnlineResource(value);
-  } else {
-    if ((online_resource = msBuildOnlineResource(map, req)) == NULL) {
-      msSetError(MS_CGIERR, "Impossible to establish server URL.  Please set \"%s\" metadata.", "msOWSGetOnlineResource()", metadata_name);
-      return NULL;
-    }
-  }
-
-  return online_resource;
-}
-
-
-/*
 ** msOWSGetOnlineResource()
 **
 ** Return the online resource for this service and add language parameter.
@@ -1168,7 +1334,7 @@ char * msOWSGetOnlineResource2(mapObj *map, const char *namespaces, const char *
 {
   char *online_resource = msOWSGetOnlineResource(map, namespaces, metadata_name, req);
 
-  if ( online_resource && validated_language ) {
+  if ( online_resource && validated_language && validated_language[0] ) {
     /* online_resource is already terminated, so we can simply add language=...& */
     /* but first we need to make sure that online_resource has enough capacity */
     online_resource = (char *)msSmallRealloc(online_resource, strlen(online_resource) + strlen(validated_language) +  11);
@@ -1178,27 +1344,6 @@ char * msOWSGetOnlineResource2(mapObj *map, const char *namespaces, const char *
   }
 
   return online_resource;
-}
-
-/* msOWSGetSchemasLocation()
-**
-** schemas location is the root of the web tree where all WFS-related
-** schemas can be found on this server.  These URLs must exist in order
-** to validate xml.
-**
-** Use value of "ows_schemas_location" metadata, if not set then
-** return ".." as a default
-*/
-const char *msOWSGetSchemasLocation(mapObj *map)
-{
-  const char *schemas_location;
-
-  schemas_location = msLookupHashTable(&(map->web.metadata),
-                                       "ows_schemas_location");
-  if (schemas_location == NULL)
-    schemas_location = OWS_DEFAULT_SCHEMAS_LOCATION;
-
-  return schemas_location;
 }
 
 /* msOWSGetInspireSchemasLocation()
@@ -1219,34 +1364,6 @@ const char *msOWSGetInspireSchemasLocation(mapObj *map)
     schemas_location = "http://inspire.ec.europa.eu/schemas";
 
   return schemas_location;
-}
-
-/* msOWSGetLanguage()
-**
-** returns the language via MAP/WEB/METADATA/ows_language
-**
-** Use value of "ows_language" metadata, if not set then
-** return "undefined" as a default
-*/
-const char *msOWSGetLanguage(mapObj *map, const char *context)
-{
-  const char *language;
-
-  /* if this is an exception, MapServer always returns Exception
-     messages in en-US
-  */
-  if (strcmp(context,"exception") == 0) {
-    language = MS_ERROR_LANGUAGE;
-  }
-  /* if not, fetch language from mapfile metadata */
-  else {
-    language = msLookupHashTable(&(map->web.metadata), "ows_language");
-
-    if (language == NULL) {
-      language = "undefined";
-    }
-  }
-  return language;
 }
 
 /* msOWSGetLanguageList
@@ -1406,7 +1523,9 @@ int msOWSPrintInspireCommonMetadata(FILE *stream, mapObj *map, const char *names
     } else {
       status = action_if_not_found;
       if (OWS_WARN == action_if_not_found) {
-        msIO_fprintf(stream, "<!-- WARNING: Mandatory metadata '%s%s' was missing in this context. -->\n", (namespaces?"..._":""), "inspire_metadataurl_href");
+        char* pszExpandedMetadataKey = msOWSGetExpandedMetadataKey(namespaces, "inspire_metadataurl_href");
+        msIO_fprintf(stream, "<!-- WARNING: Mandatory metadata %s was missing in this context. -->\n", pszExpandedMetadataKey);
+        msFree(pszExpandedMetadataKey);
       }
     }
   } else if (strcasecmp("embed",inspire_capabilities) == 0) {
@@ -1454,7 +1573,7 @@ int msOWSPrintInspireCommonLanguages(FILE *stream, mapObj *map, const char *name
 
   char *default_language = msOWSGetLanguageFromList(map, namespaces, NULL);
 
-  if(validated_language && default_language) {
+  if(validated_language && validated_language[0] && default_language) {
     msIO_fprintf(stream, "    <inspire_common:SupportedLanguages>\n");
     msIO_fprintf(stream, "      <inspire_common:DefaultLanguage><inspire_common:Language>%s"
                  "</inspire_common:Language></inspire_common:DefaultLanguage>\n",
@@ -1474,7 +1593,9 @@ int msOWSPrintInspireCommonLanguages(FILE *stream, mapObj *map, const char *name
   } else {
     status = action_if_not_found;
     if (OWS_WARN == action_if_not_found) {
-      msIO_fprintf(stream, "<!-- WARNING: Mandatory metadata '%s%s' was missing in this context. -->\n", (namespaces?"..._":""), "languages");
+      char* pszExpandedMetadataKey = msOWSGetExpandedMetadataKey(namespaces, "languages");
+      msIO_fprintf(stream, "<!-- WARNING: Mandatory metadata %s was missing in this context. -->\n", pszExpandedMetadataKey);
+      msFree(pszExpandedMetadataKey);
     }
   }
 
@@ -1504,7 +1625,9 @@ int msOWSPrintMetadata(FILE *stream, hashTableObj *metadata,
     msIO_fprintf(stream, format, value);
   } else {
     if (action_if_not_found == OWS_WARN) {
-      msIO_fprintf(stream, "<!-- WARNING: Mandatory metadata '%s%s' was missing in this context. -->\n", (namespaces?"..._":""), name);
+      char* pszExpandedMetadataKey = msOWSGetExpandedMetadataKey(namespaces, name);
+      msIO_fprintf(stream, "<!-- WARNING: Mandatory metadata %s was missing in this context. -->\n", pszExpandedMetadataKey);
+      msFree(pszExpandedMetadataKey);
       status = action_if_not_found;
     }
 
@@ -1557,7 +1680,16 @@ int msOWSPrintEncodeMetadata2(FILE *stream, hashTableObj *metadata,
     free(pszEncodedValue);
   } else {
     if (action_if_not_found == OWS_WARN) {
-      msIO_fprintf(stream, "<!-- WARNING: Mandatory metadata '%s%s%s%s' was missing in this context. -->\n", (namespaces?"..._":""), name, (validated_language?".":""), (validated_language?validated_language:""));
+      char* pszExpandedName = msStringConcatenate(NULL, name);
+      if( validated_language && validated_language[0] )
+      {
+          pszExpandedName = msStringConcatenate(pszExpandedName, ".");
+          pszExpandedName = msStringConcatenate(pszExpandedName, validated_language);
+      }
+      char* pszExpandedMetadataKey = msOWSGetExpandedMetadataKey(namespaces, pszExpandedName);
+      msIO_fprintf(stream, "<!-- WARNING: Mandatory metadata %s was missing in this context. -->\n", pszExpandedMetadataKey);
+      msFree(pszExpandedName);
+      msFree(pszExpandedMetadataKey);
       status = action_if_not_found;
     }
 
@@ -1619,7 +1751,9 @@ int msOWSPrintValidateMetadata(FILE *stream, hashTableObj *metadata,
     msIO_fprintf(stream, format, value);
   } else {
     if (action_if_not_found == OWS_WARN) {
-      msIO_fprintf(stream, "<!-- WARNING: Mandatory metadata '%s%s' was missing in this context. -->\n", (namespaces?"..._":""), name);
+      char* pszExpandedMetadataKey = msOWSGetExpandedMetadataKey(namespaces, name);
+      msIO_fprintf(stream, "<!-- WARNING: Mandatory metadata %s was missing in this context. -->\n", pszExpandedMetadataKey);
+      msFree(pszExpandedMetadataKey);
       status = action_if_not_found;
     }
 
@@ -1679,7 +1813,9 @@ int msOWSPrintGroupMetadata2(FILE *stream, mapObj *map, char* pszGroupName,
   }
 
   if (action_if_not_found == OWS_WARN) {
-    msIO_fprintf(stream, "<!-- WARNING: Mandatory metadata '%s%s' was missing in this context. -->\n", (namespaces?"..._":""), name);
+    char* pszExpandedMetadataKey = msOWSGetExpandedMetadataKey(namespaces, name);
+    msIO_fprintf(stream, "<!-- WARNING: Mandatory metadata %s was missing in this context. -->\n", pszExpandedMetadataKey);
+    msFree(pszExpandedMetadataKey);
     status = action_if_not_found;
   }
 
@@ -1740,12 +1876,11 @@ int msOWSPrintURLType(FILE *stream, hashTableObj *metadata,
 {
   const char *value;
   char *metadata_name;
-  size_t buffer_size = 0, buffer_size_tmp = 0;
   char *encoded;
   int status = MS_NOERR;
   char *type=NULL, *width=NULL, *height=NULL, *urlfrmt=NULL, *href=NULL;
 
-  buffer_size = strlen(name)+10;
+  const size_t buffer_size = strlen(name)+10;
   metadata_name = (char*)malloc(buffer_size);
 
   /* Get type */
@@ -1754,7 +1889,7 @@ int msOWSPrintURLType(FILE *stream, hashTableObj *metadata,
     value = msOWSLookupMetadata(metadata, namespaces, metadata_name);
     if(value != NULL) {
       encoded = msEncodeHTMLEntities(value);
-      buffer_size_tmp = strlen(type_format)+strlen(encoded)+1;
+      const size_t buffer_size_tmp = strlen(type_format)+strlen(encoded)+1;
       type = (char*)malloc(buffer_size_tmp);
       snprintf(type, buffer_size_tmp, type_format, encoded);
       msFree(encoded);
@@ -1767,7 +1902,7 @@ int msOWSPrintURLType(FILE *stream, hashTableObj *metadata,
     value = msOWSLookupMetadata(metadata, namespaces, metadata_name);
     if(value != NULL) {
       encoded = msEncodeHTMLEntities(value);
-      buffer_size_tmp = strlen(width_format)+strlen(encoded)+1;
+      const size_t buffer_size_tmp = strlen(width_format)+strlen(encoded)+1;
       width = (char*)malloc(buffer_size_tmp);
       snprintf(width, buffer_size_tmp, width_format, encoded);
       msFree(encoded);
@@ -1780,7 +1915,7 @@ int msOWSPrintURLType(FILE *stream, hashTableObj *metadata,
     value = msOWSLookupMetadata(metadata, namespaces, metadata_name);
     if(value != NULL) {
       encoded = msEncodeHTMLEntities(value);
-      buffer_size_tmp = strlen(height_format)+strlen(encoded)+1;
+      const size_t buffer_size_tmp = strlen(height_format)+strlen(encoded)+1;
       height = (char*)malloc(buffer_size_tmp);
       snprintf(height, buffer_size_tmp, height_format, encoded);
       msFree(encoded);
@@ -1793,7 +1928,7 @@ int msOWSPrintURLType(FILE *stream, hashTableObj *metadata,
     value = msOWSLookupMetadata(metadata, namespaces, metadata_name);
     if(value != NULL) {
       encoded = msEncodeHTMLEntities(value);
-      buffer_size_tmp = strlen(urlfrmt_format)+strlen(encoded)+1;
+      const size_t buffer_size_tmp = strlen(urlfrmt_format)+strlen(encoded)+1;
       urlfrmt = (char*)malloc(buffer_size_tmp);
       snprintf(urlfrmt, buffer_size_tmp, urlfrmt_format, encoded);
       msFree(encoded);
@@ -1806,7 +1941,7 @@ int msOWSPrintURLType(FILE *stream, hashTableObj *metadata,
     value = msOWSLookupMetadata(metadata, namespaces, metadata_name);
     if(value != NULL) {
       encoded = msEncodeHTMLEntities(value);
-      buffer_size_tmp = strlen(href_format)+strlen(encoded)+1;
+      const size_t buffer_size_tmp = strlen(href_format)+strlen(encoded)+1;
       href = (char*)malloc(buffer_size_tmp);
       snprintf(href, buffer_size_tmp, href_format, encoded);
       msFree(encoded);
@@ -1823,36 +1958,38 @@ int msOWSPrintURLType(FILE *stream, hashTableObj *metadata,
         (!urlfrmt && format_is_mandatory) || (!href && href_is_mandatory)) {
       msIO_fprintf(stream, "<!-- WARNING: Some mandatory elements for '%s' are missing in this context. -->\n", tag_name);
       if (action_if_not_found == OWS_WARN) {
-        msIO_fprintf(stream, "<!-- WARNING: Mandatory metadata '%s%s' was missing in this context. -->\n", (namespaces?"..._":""), name);
+        char* pszExpandedMetadataKey = msOWSGetExpandedMetadataKey(namespaces, name);
+        msIO_fprintf(stream, "<!-- WARNING: Mandatory metadata %s was missing in this context. -->\n", pszExpandedMetadataKey);
+        msFree(pszExpandedMetadataKey);
         status = action_if_not_found;
       }
     } else {
       if(!type && type_format && default_type) {
-        buffer_size_tmp = strlen(type_format) + strlen(default_type) + 2;
+        const size_t buffer_size_tmp = strlen(type_format) + strlen(default_type) + 2;
         type = (char*) malloc(buffer_size_tmp);
         snprintf(type, buffer_size_tmp, type_format, default_type);
       } else if(!type)
         type = msStrdup("");
       if(!width && width_format && default_width) {
-        buffer_size_tmp = strlen(width_format) + strlen(default_width) + 2;
+        const size_t buffer_size_tmp = strlen(width_format) + strlen(default_width) + 2;
         width = (char*) malloc(buffer_size_tmp);
         snprintf(width, buffer_size_tmp, width_format, default_width);
       } else if(!width)
         width = msStrdup("");
       if(!height && height_format && default_height) {
-        buffer_size_tmp =  strlen(height_format) + strlen(default_height) + 2;
+        const size_t buffer_size_tmp =  strlen(height_format) + strlen(default_height) + 2;
         height = (char*) malloc(buffer_size_tmp);
         snprintf(height, buffer_size_tmp, height_format, default_height);
       } else if(!height)
         height = msStrdup("");
       if(!urlfrmt && urlfrmt_format && default_urlfrmt) {
-        buffer_size_tmp = strlen(urlfrmt_format) + strlen(default_urlfrmt) + 2;
+        const size_t buffer_size_tmp = strlen(urlfrmt_format) + strlen(default_urlfrmt) + 2;
         urlfrmt = (char*) malloc(buffer_size_tmp);
         snprintf(urlfrmt, buffer_size_tmp, urlfrmt_format, default_urlfrmt);
       } else if(!urlfrmt)
         urlfrmt = msStrdup("");
       if(!href && href_format && default_href) {
-        buffer_size_tmp = strlen(href_format) + strlen(default_href) + 2;
+        const size_t buffer_size_tmp = strlen(href_format) + strlen(default_href) + 2;
         href = (char*) malloc(buffer_size_tmp);
         snprintf(href, buffer_size_tmp, href_format, default_href);
       } else if(!href)
@@ -1874,7 +2011,9 @@ int msOWSPrintURLType(FILE *stream, hashTableObj *metadata,
     msFree(href);
   } else {
     if (action_if_not_found == OWS_WARN) {
-      msIO_fprintf(stream, "<!-- WARNING: Mandatory metadata '%s%s' was missing in this context. -->\n", (namespaces?"..._":""), name);
+      char* pszExpandedMetadataKey = msOWSGetExpandedMetadataKey(namespaces, name);
+      msIO_fprintf(stream, "<!-- WARNING: Mandatory metadata %s was missing in this context. -->\n", pszExpandedMetadataKey);
+      msFree(pszExpandedMetadataKey);
       status = action_if_not_found;
     }
   }
@@ -2083,23 +2222,6 @@ int msOWSPrintEncodeParamList(FILE *stream, const char *name,
 
 
 /*
-** msOWSProjectToWGS84()
-**
-** Reprojects the extent to WGS84.
-**
-*/
-void msOWSProjectToWGS84(projectionObj *srcproj, rectObj *ext)
-{
-  if (srcproj->numargs > 0 && !pj_is_latlong(srcproj->proj)) {
-    projectionObj wgs84;
-    msInitProjection(&wgs84);
-    msLoadProjectionString(&wgs84, "+proj=longlat +ellps=WGS84 +datum=WGS84");
-    msProjectRect(srcproj, &wgs84, ext);
-    msFreeProjection(&wgs84);
-  }
-}
-
-/*
 ** msOWSPrintEX_GeographicBoundingBox()
 **
 ** Print a EX_GeographicBoundingBox tag for WMS1.3.0
@@ -2118,10 +2240,10 @@ void msOWSPrintEX_GeographicBoundingBox(FILE *stream, const char *tabspace,
   msOWSProjectToWGS84(srcproj, &ext);
 
   msIO_fprintf(stream, "%s<%s>\n", tabspace, pszTag);
-  msIO_fprintf(stream, "%s    <westBoundLongitude>%g</westBoundLongitude>\n", tabspace, ext.minx);
-  msIO_fprintf(stream, "%s    <eastBoundLongitude>%g</eastBoundLongitude>\n", tabspace, ext.maxx);
-  msIO_fprintf(stream, "%s    <southBoundLatitude>%g</southBoundLatitude>\n", tabspace, ext.miny);
-  msIO_fprintf(stream, "%s    <northBoundLatitude>%g</northBoundLatitude>\n", tabspace, ext.maxy);
+  msIO_fprintf(stream, "%s    <westBoundLongitude>%.6f</westBoundLongitude>\n", tabspace, ext.minx);
+  msIO_fprintf(stream, "%s    <eastBoundLongitude>%.6f</eastBoundLongitude>\n", tabspace, ext.maxx);
+  msIO_fprintf(stream, "%s    <southBoundLatitude>%.6f</southBoundLatitude>\n", tabspace, ext.miny);
+  msIO_fprintf(stream, "%s    <northBoundLatitude>%.6f</northBoundLatitude>\n", tabspace, ext.maxy);
   msIO_fprintf(stream, "%s</%s>\n", tabspace, pszTag);
 
   /* msIO_fprintf(stream, "%s<%s minx=\"%g\" miny=\"%g\" maxx=\"%g\" maxy=\"%g\" />\n",
@@ -2154,7 +2276,7 @@ void msOWSPrintLatLonBoundingBox(FILE *stream, const char *tabspace,
     }
   }
 
-  msIO_fprintf(stream, "%s<%s minx=\"%g\" miny=\"%g\" maxx=\"%g\" maxy=\"%g\" />\n",
+  msIO_fprintf(stream, "%s<%s minx=\"%.6f\" miny=\"%.6f\" maxx=\"%.6f\" maxy=\"%.6f\" />\n",
                tabspace, pszTag, ext.minx, ext.miny, ext.maxx, ext.maxy);
 }
 
@@ -2211,34 +2333,39 @@ void msOWSPrintBoundingBox(FILE *stream, const char *tabspace,
 
       /* reproject the extents for each SRS's bounding box */
       msInitProjection(&proj);
+      msProjectionInheritContextFrom(&proj, srcproj);
       if (msLoadProjectionStringEPSG(&proj, (char *)value) == 0) {
         if (msProjectionsDiffer(srcproj, &proj) == MS_TRUE) {
           msProjectRect(srcproj, &proj, &ext);
         }
         /*for wms 1.3.0 we need to make sure that we present the BBOX with
           a reversed axes for some espg codes*/
-        if (wms_version >= OWS_1_3_0 && value && strncasecmp(value, "EPSG:", 5) == 0) {
+        if (wms_version >= OWS_1_3_0 && strncasecmp(value, "EPSG:", 5) == 0) {
           msAxisNormalizePoints( &proj, 1, &(ext.minx), &(ext.miny) );
           msAxisNormalizePoints( &proj, 1, &(ext.maxx), &(ext.maxy) );
         }
       }
-      msFreeProjection( &proj );
 
       encoded = msEncodeHTMLEntities(value);
-      if (wms_version >= OWS_1_3_0)
-        msIO_fprintf(stream, "%s<BoundingBox CRS=\"%s\"\n"
-                     "%s            minx=\"%g\" miny=\"%g\" maxx=\"%g\" maxy=\"%g\"",
-                     tabspace, encoded,
+      if (msProjIsGeographicCRS(&proj) )
+        msIO_fprintf(stream, "%s<BoundingBox %s=\"%s\"\n"
+                     "%s            minx=\"%.6f\" miny=\"%.6f\" maxx=\"%.6f\" maxy=\"%.6f\"",
+                     tabspace,
+                     (wms_version >= OWS_1_3_0) ? "CRS" : "SRS",
+                     encoded,
                      tabspace, ext.minx, ext.miny,
                      ext.maxx, ext.maxy);
       else
-        msIO_fprintf(stream, "%s<BoundingBox SRS=\"%s\"\n"
+        msIO_fprintf(stream, "%s<BoundingBox %s=\"%s\"\n"
                      "%s            minx=\"%g\" miny=\"%g\" maxx=\"%g\" maxy=\"%g\"",
-                     tabspace, encoded,
+                     tabspace,
+                     (wms_version >= OWS_1_3_0) ? "CRS" : "SRS",
+                     encoded,
                      tabspace, ext.minx, ext.miny,
                      ext.maxx, ext.maxy);
 
       msFree(encoded);
+      msFreeProjection( &proj );
 
       if( (resx = msOWSLookupMetadata2( layer_meta, map_meta, "MFO", "resx" )) != NULL &&
           (resy = msOWSLookupMetadata2( layer_meta, map_meta, "MFO", "resy" )) != NULL ) {
@@ -2350,6 +2477,7 @@ void msOWSPrintContactInfo( FILE *stream, const char *tabspace,
 */
 int msOWSGetLayerExtent(mapObj *map, layerObj *lp, const char *namespaces, rectObj *ext)
 {
+  (void)map;
   const char *value;
 
   if ((value = msOWSLookupMetadata(&(lp->metadata), namespaces, "extent")) != NULL) {
@@ -2533,50 +2661,6 @@ char *msOWSBuildURLFilename(const char *pszPath, const char *pszURL,
 }
 
 /*
-** msOWSGetEPSGProj()
-**
-** Extract projection code for this layer/map.
-**
-** First look for a xxx_srs metadata. If not found then look for an EPSG
-** code in projectionObj, and if not found then return NULL.
-**
-** If bReturnOnlyFirstOne=TRUE and metadata contains multiple EPSG codes
-** then only the first one (which is assumed to be the layer's default
-** projection) is returned.
-*/
-void msOWSGetEPSGProj(projectionObj *proj, hashTableObj *metadata, const char *namespaces, int bReturnOnlyFirstOne, char **epsgCode)
-{
-  const char *value;
-  *epsgCode = NULL;
-
-  /* metadata value should already be in format "EPSG:n" or "AUTO:..." */
-  if (metadata && ((value = msOWSLookupMetadata(metadata, namespaces, "srs")) != NULL)) {
-    const char *space_ptr;
-    if (!bReturnOnlyFirstOne || (space_ptr = strchr(value,' ')) == NULL) {
-      *epsgCode = msStrdup(value);
-      return;
-    }
-    
-
-    *epsgCode = msSmallMalloc((space_ptr - value + 1)*sizeof(char));
-    /* caller requested only first projection code, copy up to the first space character*/
-    strlcpy(*epsgCode, value, space_ptr - value + 1) ;
-    return;
-  } else if (proj && proj->numargs > 0 && (value = strstr(proj->args[0], "init=epsg:")) != NULL) {
-    *epsgCode = msSmallMalloc((strlen("EPSG:")+strlen(value+10)+1)*sizeof(char));
-    sprintf(*epsgCode, "EPSG:%s", value+10);
-    return;
-  } else if (proj && proj->numargs > 0 && (value = strstr(proj->args[0], "init=crs:")) != NULL) {
-    *epsgCode = msSmallMalloc((strlen("CRS:")+strlen(value+9)+1)*sizeof(char));
-    sprintf(*epsgCode, "CRS:%s", value+9);
-    return;
-  } else if (proj && proj->numargs > 0 && (strncasecmp(proj->args[0], "AUTO:", 5) == 0 ||
-             strncasecmp(proj->args[0], "AUTO2:", 6) == 0)) {
-    *epsgCode = msStrdup(proj->args[0]);
-    return;
-  }
-}
-/*
 ** msOWSGetProjURN()
 **
 ** Fetch an OGC URN for this layer or map.  Similar to msOWSGetEPSGProj()
@@ -2589,14 +2673,17 @@ char *msOWSGetProjURN(projectionObj *proj, hashTableObj *metadata, const char *n
   char *result;
   char **tokens;
   int numtokens, i;
-  size_t bufferSize = 0;
-  char *oldStyle;
+  char *oldStyle = NULL;
   
-  msOWSGetEPSGProj( proj, metadata, namespaces,
-                         bReturnOnlyFirstOne, &oldStyle );
+  msOWSGetEPSGProj( proj, metadata, namespaces, bReturnOnlyFirstOne, &oldStyle );
 
-  if( oldStyle == NULL || strncmp(oldStyle,"EPSG:",5) != 0 )
+  if( oldStyle == NULL ||
+      strncmp(oldStyle,"CRS:",4) == 0 ||
+      strncmp(oldStyle,"AUTO:",5) == 0 ||
+      strncmp(oldStyle,"AUTO2:",6) == 0 ) {
+    msFree(oldStyle);
     return NULL;
+  }
 
   result = msStrdup("");
 
@@ -2604,9 +2691,12 @@ char *msOWSGetProjURN(projectionObj *proj, hashTableObj *metadata, const char *n
   msFree(oldStyle);
   for(i=0; tokens != NULL && i<numtokens; i++) {
     char urn[100];
+    char* colon = strchr(tokens[i], ':');
 
-    if( strncmp(tokens[i],"EPSG:",5) == 0 )
-      snprintf( urn, sizeof(urn), "urn:ogc:def:crs:EPSG::%s", tokens[i]+5 );
+    if( colon != NULL && strchr(colon + 1, ':') == NULL ) {
+      *colon = 0;
+      snprintf( urn, sizeof(urn), "urn:ogc:def:crs:%s::%s", tokens[i], colon + 1 );
+    }
     else if( strcasecmp(tokens[i],"imageCRS") == 0 )
       snprintf( urn, sizeof(urn), "urn:ogc:def:crs:OGC::imageCRS" );
     else if( strncmp(tokens[i],"urn:ogc:def:crs:",16) == 0 ) {
@@ -2616,8 +2706,8 @@ char *msOWSGetProjURN(projectionObj *proj, hashTableObj *metadata, const char *n
     }
 
     if( strlen(urn) > 0 ) {
-      bufferSize = strlen(result)+strlen(urn)+2;
-      result = (char *) realloc(result, bufferSize);
+      const size_t bufferSize = strlen(result)+strlen(urn)+2;
+      result = (char *) msSmallRealloc(result, bufferSize);
 
       if( strlen(result) > 0 )
         strlcat( result, " ", bufferSize);
@@ -2650,13 +2740,14 @@ char *msOWSGetProjURI(projectionObj *proj, hashTableObj *metadata, const char *n
   char *result;
   char **tokens;
   int numtokens, i;
-  char *oldStyle;
+  char *oldStyle = NULL;
   
-  msOWSGetEPSGProj( proj, metadata, namespaces,
-                         bReturnOnlyFirstOne, &oldStyle);
+  msOWSGetEPSGProj( proj, metadata, namespaces, bReturnOnlyFirstOne, &oldStyle);
 
-  if( oldStyle == NULL || !EQUALN(oldStyle,"EPSG:",5) )
+  if( oldStyle == NULL || !EQUALN(oldStyle,"EPSG:",5) ) {
+    msFree(oldStyle); // avoid leak
     return NULL;
+  }
 
   result = msStrdup("");
 
@@ -2675,7 +2766,7 @@ char *msOWSGetProjURI(projectionObj *proj, hashTableObj *metadata, const char *n
       strlcpy( urn, "", sizeof(urn) );
 
     if( strlen(urn) > 0 ) {
-      result = (char *) realloc(result,strlen(result)+strlen(urn)+2);
+      result = (char *) msSmallRealloc(result,strlen(result)+strlen(urn)+2);
 
       if( strlen(result) > 0 )
         strcat( result, " " );
@@ -2907,7 +2998,4 @@ outputFormatObj* msOwsIsOutputFormatValid(mapObj *map, const char *format,
   return psFormat;
 }
 
-#endif /* USE_WMS_SVR || USE_WFS_SVR  || USE_WCS_SVR */
-
-
-
+#endif /* defined(USE_WMS_SVR) || defined (USE_WFS_SVR) || defined (USE_WCS_SVR) || defined(USE_SOS_SVR) || defined(USE_WMS_LYR) || defined(USE_WFS_LYR) */

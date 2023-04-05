@@ -11,6 +11,7 @@
 #cmakedefine USE_WCS_SVR 1
 #cmakedefine USE_WFS_SVR 1
 #cmakedefine USE_SOS_SVR 1
+#cmakedefine USE_OGCAPI_SVR 1
 #cmakedefine USE_WFS_LYR 1
 #cmakedefine USE_WMS_LYR 1
 #cmakedefine USE_CURL 1
@@ -27,7 +28,6 @@
 #cmakedefine USE_MYSQL 1
 #cmakedefine USE_THREAD 1
 #cmakedefine USE_KML 1
-#cmakedefine USE_POINT_Z_M 1
 #cmakedefine USE_ORACLESPATIAL 1
 #cmakedefine USE_EXEMPI 1
 #cmakedefine USE_XMLMAPFILE 1

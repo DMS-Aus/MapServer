@@ -53,28 +53,27 @@
  * Copy a projectionObj while adding additional arguments              *
  **********************************************************************/
 
-int msCopyProjectionExtended(projectionObj *dst, projectionObj *src, char ** args, int num_args)
+int msCopyProjectionExtended(projectionObj *dst, const projectionObj *src, char ** args, int num_args)
 {
-
-#ifdef USE_PROJ
-  int i;
-
   MS_COPYSTELEM(numargs);
   MS_COPYSTELEM(gt);
   MS_COPYSTELEM(automatic);
 
-  for (i = 0; i < dst->numargs; i++) {
+  for (int i = 0; i < dst->numargs; i++) {
     /* Our destination consists of unallocated pointers */
     dst->args[i] = msStrdup(src->args[i]);
   }
-  for(i=0 ; i< num_args; i++) {
-    dst->args[dst->numargs++] = msStrdup(args[i]);
+  if( args )
+  {
+      for(int i=0 ; i< num_args; i++) {
+        dst->args[dst->numargs++] = msStrdup(args[i]);
+      }
   }
+  msProjectionInheritContextFrom(dst, src);
   if (dst->numargs != 0) {
     if (msProcessProjection(dst) != MS_SUCCESS)
       return MS_FAILURE;
   }
-#endif
   MS_COPYSTELEM(wellknownprojection);
   return MS_SUCCESS;
 }
@@ -85,7 +84,7 @@ int msCopyProjectionExtended(projectionObj *dst, projectionObj *src, char ** arg
  * Copy a projectionObj                                                *
  **********************************************************************/
 
-int msCopyProjection(projectionObj *dst, projectionObj *src)
+int msCopyProjection(projectionObj *dst, const projectionObj *src)
 {
   return msCopyProjectionExtended(dst,src,NULL,0);
 }
@@ -95,7 +94,7 @@ int msCopyProjection(projectionObj *dst, projectionObj *src)
  *                                                                     *
  * Copy a lineObj, using msCopyPoint()                                 *
  **********************************************************************/
-int msCopyLine(lineObj *dst, lineObj *src)
+int msCopyLine(lineObj *dst, const lineObj *src)
 {
 
   int i;
@@ -142,7 +141,7 @@ int msCopyShapeObj(shapeObj *dst, shapeObj *src) {
  * Copy an itemObj                                                     *
  **********************************************************************/
 
-int msCopyItem(itemObj *dst, itemObj *src)
+int msCopyItem(itemObj *dst, const itemObj *src)
 {
 
   MS_COPYSTRING(dst->name, src->name);
@@ -160,7 +159,7 @@ int msCopyItem(itemObj *dst, itemObj *src)
  * Copy a hashTableObj, using msInsertHashTable()                      *
  **********************************************************************/
 
-int msCopyHashTable(hashTableObj *dst, hashTableObj *src)
+int msCopyHashTable(hashTableObj *dst, const hashTableObj *src)
 {
   const char *key=NULL;
   while (1) {
@@ -179,7 +178,7 @@ int msCopyHashTable(hashTableObj *dst, hashTableObj *src)
  * Copy a fontSetObj, using msCreateHashTable() and msCopyHashTable()  *
  **********************************************************************/
 
-int msCopyFontSet(fontSetObj *dst, fontSetObj *src, mapObj *map)
+int msCopyFontSet(fontSetObj *dst, const fontSetObj *src, mapObj *map)
 {
 
   MS_COPYSTRING(dst->filename, src->filename);
@@ -202,7 +201,7 @@ int msCopyFontSet(fontSetObj *dst, fontSetObj *src, mapObj *map)
  * Copy an expressionObj, but only its string, type and flags          *
  **********************************************************************/
 
-int msCopyExpression(expressionObj *dst, expressionObj *src)
+int msCopyExpression(expressionObj *dst, const expressionObj *src)
 {
   if((dst->type == MS_REGEX) && dst->compiled) ms_regfree(&(dst->regex));
   dst->compiled = MS_FALSE;
@@ -220,7 +219,7 @@ int msCopyExpression(expressionObj *dst, expressionObj *src)
  * Copy a joinObj                                                      *
  **********************************************************************/
 
-int msCopyJoin(joinObj *dst, joinObj *src)
+int msCopyJoin(joinObj *dst, const joinObj *src)
 {
   MS_COPYSTRING(dst->name, src->name);
 
@@ -254,7 +253,7 @@ int msCopyJoin(joinObj *dst, joinObj *src)
  * Copy a queryMapObj, using msCopyColor()                             *
  **********************************************************************/
 
-int msCopyQueryMap(queryMapObj *dst, queryMapObj *src)
+int msCopyQueryMap(queryMapObj *dst, const queryMapObj *src)
 {
   MS_COPYSTELEM(height);
   MS_COPYSTELEM(width);
@@ -272,7 +271,7 @@ int msCopyQueryMap(queryMapObj *dst, queryMapObj *src)
  * Copy a labelLeaderObj, using msCopyStyle()                          *
  **********************************************************************/
 
-int msCopyLabelLeader(labelLeaderObj *dst, labelLeaderObj *src)
+int msCopyLabelLeader(labelLeaderObj *dst, const labelLeaderObj *src)
 {
   int i;
   assert(dst && src);
@@ -312,15 +311,18 @@ int msCopyLabelLeader(labelLeaderObj *dst, labelLeaderObj *src)
  * Copy a labelObj, using msCopyColor() and msCopyStyle()              *
  **********************************************************************/
 
-int msCopyLabel(labelObj *dst, labelObj *src)
+int msCopyLabel(labelObj *dst, const labelObj *src)
 {
   int i;
 
   for(i=0; i<MS_LABEL_BINDING_LENGTH; i++) {
     MS_COPYSTRING(dst->bindings[i].item, src->bindings[i].item);
     dst->bindings[i].index = src->bindings[i].index; /* no way to use the macros */
+    MS_COPYSTRING(dst->exprBindings[i].string, src->exprBindings[i].string);
+    dst->exprBindings[i].type = src->exprBindings[i].type;
   }
   MS_COPYSTELEM(numbindings);
+  MS_COPYSTELEM(nexprbindings);
 
   MS_COPYSTRING(dst->font, src->font);
 
@@ -412,6 +414,9 @@ int msCopyLabel(labelObj *dst, labelObj *src)
     dst->leader = NULL;
   }
 
+  MS_COPYSTELEM(sizeunits);
+  MS_COPYSTELEM(scalefactor);
+
   return MS_SUCCESS;
 }
 
@@ -422,10 +427,9 @@ int msCopyLabel(labelObj *dst, labelObj *src)
  * msCopyHashTable()                                                   *
  **********************************************************************/
 
-int msCopyWeb(webObj *dst, webObj *src, mapObj *map)
+int msCopyWeb(webObj *dst, const webObj *src, mapObj *map)
 {
 
-  MS_COPYSTRING(dst->log, src->log);
   MS_COPYSTRING(dst->imagepath, src->imagepath);
   MS_COPYSTRING(dst->imageurl, src->imageurl);
   dst->map = map;
@@ -438,8 +442,6 @@ int msCopyWeb(webObj *dst, webObj *src, mapObj *map)
   MS_COPYSTRING(dst->footer, src->footer);
   MS_COPYSTRING(dst->empty, src->empty);
   MS_COPYSTRING(dst->error, src->error);
-
-  MS_COPYRECT(&(dst->extent), &(src->extent));
 
   MS_COPYSTELEM(minscaledenom);
   MS_COPYSTELEM(maxscaledenom);
@@ -466,19 +468,21 @@ int msCopyWeb(webObj *dst, webObj *src, mapObj *map)
  * Copy a styleObj, using msCopyColor()                                *
  **********************************************************************/
 
-int msCopyStyle(styleObj *dst, styleObj *src)
+int msCopyStyle(styleObj *dst, const styleObj *src)
 {
   int i;
 
   for(i=0; i<MS_STYLE_BINDING_LENGTH; i++) {
     MS_COPYSTRING(dst->bindings[i].item, src->bindings[i].item);
     dst->bindings[i].index = src->bindings[i].index; /* no way to use the macros */
+    MS_COPYSTRING(dst->exprBindings[i].string, src->exprBindings[i].string);
+    dst->exprBindings[i].type = src->exprBindings[i].type;
   }
   MS_COPYSTELEM(numbindings);
+  MS_COPYSTELEM(nexprbindings);
 
   MS_COPYCOLOR(&(dst->color), &(src->color));
   MS_COPYCOLOR(&(dst->outlinecolor),&(src->outlinecolor));
-  MS_COPYCOLOR(&(dst->backgroundcolor), &(src->backgroundcolor));
 
   MS_COPYCOLOR(&(dst->mincolor), &(src->mincolor));
   MS_COPYCOLOR(&(dst->maxcolor), &(src->maxcolor));
@@ -491,6 +495,7 @@ int msCopyStyle(styleObj *dst, styleObj *src)
   MS_COPYSTELEM(gap);
   MS_COPYSTELEM(linejoin);
   MS_COPYSTELEM(linejoinmaxsize);
+  MS_COPYSTELEM(antialiased);
   MS_COPYSTELEM(linecap);
   MS_COPYSTELEM(symbol);
   MS_COPYSTELEM(size);
@@ -515,6 +520,9 @@ int msCopyStyle(styleObj *dst, styleObj *src)
   MS_COPYSTELEM(maxscaledenom);
   /* TODO: add copy for bindings */
 
+  MS_COPYSTELEM(sizeunits);
+  MS_COPYSTELEM(scalefactor);
+
   return MS_SUCCESS;
 }
 
@@ -525,9 +533,10 @@ int msCopyStyle(styleObj *dst, styleObj *src)
  * msCopyLabel(), msCreateHashTable(), msCopyHashTable()               *
  **********************************************************************/
 
-int msCopyClass(classObj *dst, classObj *src, layerObj *layer)
+int msCopyClass(classObj *dst, const classObj *src, layerObj *layer_unused)
 {
   int i, return_value;
+  (void)layer_unused;
 
   return_value = msCopyExpression(&(dst->expression),&(src->expression));
   if (return_value != MS_SUCCESS) {
@@ -536,6 +545,7 @@ int msCopyClass(classObj *dst, classObj *src, layerObj *layer)
   }
 
   MS_COPYSTELEM(status);
+  MS_COPYSTELEM(isfallback);
 
   /* free any previous styles on the dst layer */
   for(i=0; i<dst->numstyles; i++) { /* each style */
@@ -613,10 +623,13 @@ int msCopyClass(classObj *dst, classObj *src, layerObj *layer)
   MS_COPYSTELEM(layer);
   MS_COPYSTELEM(debug);
 
+  MS_COPYSTELEM(sizeunits);
+  MS_COPYSTELEM(scalefactor);
+
   return MS_SUCCESS;
 }
 
-int msCopyCluster(clusterObj *dst, clusterObj *src)
+int msCopyCluster(clusterObj *dst, const clusterObj *src)
 {
   int return_value;
 
@@ -643,7 +656,7 @@ int msCopyCluster(clusterObj *dst, clusterObj *src)
  * msCopyGrid()                                                        *
  **********************************************************************/
 
-int msCopyGrid(graticuleObj *dst, graticuleObj *src)
+int msCopyGrid(graticuleObj *dst, const graticuleObj *src)
 {
   MS_COPYSTELEM(dwhichlatitude);
   MS_COPYSTELEM(dwhichlongitude);
@@ -680,7 +693,7 @@ int msCopyGrid(graticuleObj *dst, graticuleObj *src)
  * make exact copies, this method might not get much use.              *
  **********************************************************************/
 
-int msCopyLabelCacheMember(labelCacheMemberObj *dst, labelCacheMemberObj *src)
+int msCopyLabelCacheMember(labelCacheMemberObj *dst, const labelCacheMemberObj *src)
 {
   int i;
 
@@ -715,7 +728,7 @@ int msCopyLabelCacheMember(labelCacheMemberObj *dst, labelCacheMemberObj *src)
  **********************************************************************/
 
 int msCopyMarkerCacheMember(markerCacheMemberObj *dst,
-                            markerCacheMemberObj *src)
+                            const markerCacheMemberObj *src)
 {
   MS_COPYSTELEM(id);
 
@@ -727,7 +740,7 @@ int msCopyMarkerCacheMember(markerCacheMemberObj *dst,
  * msCopyLabelCacheSlot()                                                  *
  **********************************************************************/
 
-int msCopyLabelCacheSlot(labelCacheSlotObj *dst, labelCacheSlotObj *src)
+int msCopyLabelCacheSlot(labelCacheSlotObj *dst, const labelCacheSlotObj *src)
 {
   int i;
 
@@ -748,7 +761,7 @@ int msCopyLabelCacheSlot(labelCacheSlotObj *dst, labelCacheSlotObj *src)
  * msCopyLabelCache()                                                  *
  **********************************************************************/
 
-int msCopyLabelCache(labelCacheObj *dst, labelCacheObj *src)
+int msCopyLabelCache(labelCacheObj *dst, const labelCacheObj *src)
 {
   int p;
   MS_COPYSTELEM(numlabels);
@@ -766,7 +779,7 @@ int msCopyLabelCache(labelCacheObj *dst, labelCacheObj *src)
  * msCopyResult()                                                      *
  **********************************************************************/
 
-int msCopyResult(resultObj *dst, resultObj *src)
+int msCopyResult(resultObj *dst, const resultObj *src)
 {
   MS_COPYSTELEM(shapeindex);
   MS_COPYSTELEM(tileindex);
@@ -780,7 +793,7 @@ int msCopyResult(resultObj *dst, resultObj *src)
  * msCopyResultCache()                                                 *
  **********************************************************************/
 
-int msCopyResultCache(resultCacheObj *dst, resultCacheObj *src)
+int msCopyResultCache(resultCacheObj *dst, const resultCacheObj *src)
 {
   int i;
   MS_COPYSTELEM(cachesize);
@@ -800,7 +813,7 @@ int msCopyResultCache(resultCacheObj *dst, resultCacheObj *src)
  * msCopyRect(), msCopyColor()                                         *
  **********************************************************************/
 
-int msCopyReferenceMap(referenceMapObj *dst, referenceMapObj *src,
+int msCopyReferenceMap(referenceMapObj *dst, const referenceMapObj *src,
                        mapObj *map)
 {
 
@@ -834,7 +847,7 @@ int msCopyReferenceMap(referenceMapObj *dst, referenceMapObj *src,
  * and msCopyLabel()                                                   *
  **********************************************************************/
 
-int msCopyScalebar(scalebarObj *dst, scalebarObj *src)
+int msCopyScalebar(scalebarObj *dst, const scalebarObj *src)
 {
 
   initScalebar(dst);
@@ -859,7 +872,6 @@ int msCopyScalebar(scalebarObj *dst, scalebarObj *src)
   MS_COPYSTELEM(status);
   MS_COPYSTELEM(position);
   MS_COPYSTELEM(transparent);
-  MS_COPYSTELEM(interlace);
   MS_COPYSTELEM(postlabelcache);
   MS_COPYSTELEM(align);
 
@@ -872,7 +884,7 @@ int msCopyScalebar(scalebarObj *dst, scalebarObj *src)
  * Copy a legendObj, using msCopyColor()                               *
  **********************************************************************/
 
-int msCopyLegend(legendObj *dst, legendObj *src, mapObj *map)
+int msCopyLegend(legendObj *dst, const legendObj *src, mapObj *map)
 {
   int return_value;
 
@@ -897,7 +909,6 @@ int msCopyLegend(legendObj *dst, legendObj *src, mapObj *map)
   MS_COPYSTELEM(width);
   MS_COPYSTELEM(position);
   MS_COPYSTELEM(transparent);
-  MS_COPYSTELEM(interlace);
   MS_COPYSTELEM(postlabelcache);
 
 #ifndef __cplusplus
@@ -910,14 +921,14 @@ int msCopyLegend(legendObj *dst, legendObj *src, mapObj *map)
   return MS_SUCCESS;
 }
 
-int msCopyScaleTokenEntry(scaleTokenEntryObj *src, scaleTokenEntryObj *dst) {
+int msCopyScaleTokenEntry(const scaleTokenEntryObj *src, scaleTokenEntryObj *dst) {
   MS_COPYSTRING(dst->value,src->value);
   MS_COPYSTELEM(minscale);
   MS_COPYSTELEM(maxscale);
   return MS_SUCCESS;
 }
 
-int msCopyScaleToken(scaleTokenObj *src, scaleTokenObj *dst) {
+int msCopyScaleToken(const scaleTokenObj *src, scaleTokenObj *dst) {
   int i;
   MS_COPYSTRING(dst->name,src->name);
   MS_COPYSTELEM(n_entries);
@@ -928,7 +939,7 @@ int msCopyScaleToken(scaleTokenObj *src, scaleTokenObj *dst) {
   return MS_SUCCESS;
 }
 
-int msCopyCompositingFilter(CompositingFilter **pdst, CompositingFilter *src) {
+int msCopyCompositingFilter(CompositingFilter **pdst, const CompositingFilter *src) {
   CompositingFilter *dst = NULL;
   if(!src) {
     *pdst = NULL;
@@ -948,7 +959,7 @@ int msCopyCompositingFilter(CompositingFilter **pdst, CompositingFilter *src) {
   return MS_SUCCESS;
 }
 
-int msCopyCompositer(LayerCompositer **ldst, LayerCompositer *src) {
+int msCopyCompositer(LayerCompositer **ldst, const LayerCompositer *src) {
   LayerCompositer *dst = NULL;
   if(!src) {
     *ldst = NULL;
@@ -981,7 +992,7 @@ int msCopyCompositer(LayerCompositer **ldst, LayerCompositer *src) {
  * As it stands, we are not copying a layer's resultcache              *
  **********************************************************************/
 
-int msCopyLayer(layerObj *dst, layerObj *src)
+int msCopyLayer(layerObj *dst, const layerObj *src)
 {
   int i, return_value;
   featureListNodeObjPtr current;
@@ -1028,6 +1039,7 @@ int msCopyLayer(layerObj *dst, layerObj *src)
   MS_COPYSTRING(dst->data, src->data);
   MS_COPYSTRING(dst->encoding, src->encoding);
 
+  MS_COPYSTELEM(rendermode);
   MS_COPYSTELEM(status);
   MS_COPYSTELEM(type);
   MS_COPYSTELEM(tolerance);
@@ -1110,7 +1122,6 @@ int msCopyLayer(layerObj *dst, layerObj *src)
   }
   msCopyHashTable(&dst->validation,&src->validation);
 
-  MS_COPYSTELEM(dump);
   MS_COPYSTELEM(debug);
 
   /* No need to copy the numprocessing member, as it is incremented by
@@ -1160,7 +1171,7 @@ int msCopyLayer(layerObj *dst, layerObj *src)
  * msCopyOutputFormat(), msCopyWeb(), msCopyReferenceMap()             *
  **********************************************************************/
 
-int msCopyMap(mapObj *dst, mapObj *src)
+int msCopyMap(mapObj *dst, const mapObj *src)
 {
   int i, return_value;
   outputFormatObj *format;
@@ -1197,10 +1208,6 @@ int msCopyMap(mapObj *dst, mapObj *src)
   }
 
   /* msCopyLabelCache(&(dst->labelcache), &(src->labelcache)); */
-  MS_COPYSTELEM(transparent);
-  MS_COPYSTELEM(interlace);
-  MS_COPYSTELEM(imagequality);
-
   MS_COPYRECT(&(dst->extent), &(src->extent));
 
   MS_COPYSTELEM(cellsize);
@@ -1210,6 +1217,7 @@ int msCopyMap(mapObj *dst, mapObj *src)
   MS_COPYSTELEM(resolution);
   MS_COPYSTRING(dst->shapepath, src->shapepath);
   MS_COPYSTRING(dst->mappath, src->mappath);
+  MS_COPYSTELEM(sldurl);
 
   MS_COPYCOLOR(&(dst->imagecolor), &(src->imagecolor));
 
@@ -1236,8 +1244,7 @@ int msCopyMap(mapObj *dst, mapObj *src)
   /* set the active output format */
   MS_COPYSTRING(dst->imagetype, src->imagetype);
   format = msSelectOutputFormat( dst, dst->imagetype );
-  msApplyOutputFormat(&(dst->outputformat), format, MS_NOOVERRIDE,
-                      MS_NOOVERRIDE, MS_NOOVERRIDE );
+  msApplyOutputFormat(&(dst->outputformat), format, MS_NOOVERRIDE);
 
   return_value = msCopyProjection(&(dst->projection),&(src->projection));
   if (return_value != MS_SUCCESS) {
@@ -1278,8 +1285,10 @@ int msCopyMap(mapObj *dst, mapObj *src)
     return MS_FAILURE;
   }
 
-  for (i = 0; i < dst->numlayers; i++) {
-    MS_COPYSTELEM(layerorder[i]);
+  if( src->layerorder ) {
+    for (i = 0; i < dst->numlayers; i++) {
+        MS_COPYSTELEM(layerorder[i]);
+    }
   }
   MS_COPYSTELEM(debug);
   MS_COPYSTRING(dst->datapattern, src->datapattern);

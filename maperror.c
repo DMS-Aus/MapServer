@@ -39,59 +39,61 @@
 #endif
 #include <stdarg.h>
 
+#include "cpl_conv.h"
 
+static char *const ms_errorCodes[MS_NUMERRORCODES] = { "",
+  "Unable to access file.",
+  "Memory allocation error.",
+  "Incorrect data type.",
+  "Symbol definition error.",
+  "Regular expression error.",
+  "TrueType Font error.",
+  "DBASE file error.",
+  "GD library error.",
+  "Unknown identifier.",
+  "Premature End-of-File.",
+  "Projection library error.",
+  "General error message.",
+  "CGI error.",
+  "Web application error.",
+  "Image handling error.",
+  "Hash table error.",
+  "Join error.",
+  "Search returned no results.",
+  "Shapefile error.",
+  "Expression parser error.",
+  "SDE error.",
+  "OGR error.",
+  "Query error.",
+  "WMS server error.",
+  "WMS connection error.",
+  "OracleSpatial error.",
+  "WFS server error.",
+  "WFS connection error.",
+  "WMS Map Context error.",
+  "HTTP request error.",
+  "Child array error.",
+  "WCS server error.",
+  "GEOS library error.",
+  "Invalid rectangle.",
+  "Date/time error.",
+  "GML encoding error.",
+  "SOS server error.",
+  "NULL parent pointer error.",
+  "AGG library error.",
+  "OWS error.",
+  "OpenGL renderer error.",
+  "Renderer error.",
+  "V8 engine error.",
+  "OCG API error."
+};
 
-static char *ms_errorCodes[MS_NUMERRORCODES] = {"",
-    "Unable to access file.",
-    "Memory allocation error.",
-    "Incorrect data type.",
-    "Symbol definition error.",
-    "Regular expression error.",
-    "TrueType Font error.",
-    "DBASE file error.",
-    "GD library error.",
-    "Unknown identifier.",
-    "Premature End-of-File.",
-    "Projection library error.",
-    "General error message.",
-    "CGI error.",
-    "Web application error.",
-    "Image handling error.",
-    "Hash table error.",
-    "Join error.",
-    "Search returned no results.",
-    "Shapefile error.",
-    "Expression parser error.",
-    "SDE error.",
-    "OGR error.",
-    "Query error.",
-    "WMS server error.",
-    "WMS connection error.",
-    "OracleSpatial error.",
-    "WFS server error.",
-    "WFS connection error.",
-    "WMS Map Context error.",
-    "HTTP request error.",
-    "Child array error.",
-    "WCS server error.",
-    "GEOS library error.",
-    "Invalid rectangle.",
-    "Date/time error.",
-    "GML encoding error.",
-    "SOS server error.",
-    "NULL parent pointer error.",
-    "AGG library error.",
-    "OWS error.",
-    "OpenGL renderer error.",
-    "Renderer error.",
-    "V8 engine error."                                                
-                                               };
 #ifndef USE_THREAD
 
+// Get the MapServer error object
 errorObj *msGetErrorObj()
 {
   static errorObj ms_error = {MS_NOERR, "", "", MS_FALSE, 0, NULL};
-
   return &ms_error;
 }
 #endif
@@ -100,8 +102,8 @@ errorObj *msGetErrorObj()
 
 typedef struct te_info {
   struct te_info *next;
-  void*             thread_id;
-  errorObj        ms_error;
+  void *thread_id;
+  errorObj ms_error;
 } te_info_t;
 
 static te_info_t *error_list = NULL;
@@ -109,8 +111,8 @@ static te_info_t *error_list = NULL;
 errorObj *msGetErrorObj()
 {
   te_info_t *link;
-  void*        thread_id;
-  errorObj   *ret_obj;
+  void *thread_id;
+  errorObj *ret_obj;
 
   msAcquireLock( TLOCK_ERROROBJ );
 
@@ -130,7 +132,7 @@ errorObj *msGetErrorObj()
   /* We don't have one ... initialize one. */
   else if( link == NULL || link->next == NULL ) {
     te_info_t *new_link;
-    errorObj   error_obj = { MS_NOERR, "", "", 0 };
+    errorObj   error_obj = { MS_NOERR, "", "", 0, 0, NULL };
 
     new_link = (te_info_t *) malloc(sizeof(te_info_t));
     new_link->next = error_list;
@@ -141,7 +143,7 @@ errorObj *msGetErrorObj()
   }
 
   /* If the link is not already at the head of the list, promote it */
-  else if( link != NULL && link->next != NULL ) {
+  else {
     te_info_t *target = link->next;
 
     link->next = link->next->next;
@@ -230,6 +232,7 @@ void msResetErrorList()
 
   ms_error->next = NULL;
   ms_error->code = MS_NOERR;
+  ms_error->isreported = MS_FALSE;
   ms_error->routine[0] = '\0';
   ms_error->message[0] = '\0';
   ms_error->errorcount = 0;
@@ -304,7 +307,7 @@ char *msAddErrorDisplayString(char *source, errorObj *error)
   return source;
 }
 
-char *msGetErrorString(char *delimiter)
+char *msGetErrorString(const char *delimiter)
 {
   char *errstr=NULL;
 
@@ -393,18 +396,10 @@ void msWriteErrorImage(mapObj *map, char *filename, int blank)
 {
   imageObj *img;
   int width=400, height=300;
-  int nMargin =5;
-  int nTextLength = 0;
-  int nUsableWidth = 0;
-  int nMaxCharsPerLine = 0;
-  int nLines = 0;
-  int i = 0;
-  int nStart = 0;
-  int nEnd = 0;
-  int nLength = 0;
+  const int nMargin =5;
+
   char **papszLines = NULL;
-  pointObj pnt;
-  int nWidthTxt = 0;
+  pointObj pnt = { 0 };
   outputFormatObj *format = NULL;
   char *errormsg = msGetErrorString("; ");
   errorObj *error = msGetErrorObj();
@@ -429,7 +424,7 @@ void msWriteErrorImage(mapObj *map, char *filename, int blank)
 
   /* Default to GIF if no suitable GD output format set */
   if (format == NULL || !MS_RENDERER_PLUGIN(format))
-    format = msCreateDefaultOutputFormat( NULL, "AGG/PNG8", "png" );
+    format = msCreateDefaultOutputFormat( NULL, "AGG/PNG8", "png", NULL );
 
   if(!format->transparent) {
     if(map && MS_VALID_COLOR(map->imagecolor)) {
@@ -442,29 +437,30 @@ void msWriteErrorImage(mapObj *map, char *filename, int blank)
 
   img = msImageCreate(width,height,format,imagepath,imageurl,MS_DEFAULT_RESOLUTION,MS_DEFAULT_RESOLUTION,imagecolorptr);
 
-  nTextLength = strlen(errormsg);
-  nWidthTxt  =  nTextLength * charWidth;
-  nUsableWidth = width - (nMargin*2);
+  const int nTextLength = strlen(errormsg);
+  const int nWidthTxt  =  nTextLength * charWidth;
+  const int nUsableWidth = width - (nMargin*2);
 
   /* Check to see if it all fits on one line. If not, split the text on several lines. */
   if(!blank) {
+    int nLines;
     if (nWidthTxt > nUsableWidth) {
-      nMaxCharsPerLine =  nUsableWidth/charWidth;
+      const int nMaxCharsPerLine =  nUsableWidth/charWidth;
       nLines = (int) ceil ((double)nTextLength / (double)nMaxCharsPerLine);
       if (nLines > 0) {
         papszLines = (char **)malloc(nLines*sizeof(char *));
-        for (i=0; i<nLines; i++) {
+        for (int i=0; i<nLines; i++) {
           papszLines[i] = (char *)malloc((nMaxCharsPerLine+1)*sizeof(char));
           papszLines[i][0] = '\0';
         }
       }
-      for (i=0; i<nLines; i++) {
-        nStart = i*nMaxCharsPerLine;
-        nEnd = nStart + nMaxCharsPerLine;
+      for (int i=0; i<nLines; i++) {
+        const int nStart = i*nMaxCharsPerLine;
+        int nEnd = nStart + nMaxCharsPerLine;
         if (nStart < nTextLength) {
           if (nEnd > nTextLength)
             nEnd = nTextLength;
-          nLength = nEnd-nStart;
+          const int nLength = nEnd-nStart;
 
           strncpy(papszLines[i], errormsg+nStart, nLength);
           papszLines[i][nLength] = '\0';
@@ -482,12 +478,12 @@ void msWriteErrorImage(mapObj *map, char *filename, int blank)
 
     label.size = MS_SMALL;
     MS_REFCNT_INCR((&label));
-    for (i=0; i<nLines; i++) {
+    for (int i=0; i<nLines; i++) {
       pnt.y = charHeight * ((i*2) +1);
       pnt.x = charWidth;
       initTextSymbol(&ts);
       msPopulateTextSymbolForLabelAndString(&ts,&label,papszLines[i],1,1,0);
-      if(LIKELY(MS_SUCCESS == msComputeTextPath(map,&ts))) {
+      if(MS_LIKELY(MS_SUCCESS == msComputeTextPath(map,&ts))) {
         if(MS_SUCCESS!=msDrawTextSymbol(NULL,img,pnt,&ts)) {
           /* an error occured, but there's nothing much we can do about it here as we are already handling an error condition */
         }
@@ -522,6 +518,8 @@ char *msGetVersion()
 {
   static char version[1024];
 
+  if(CPLGetConfigOption("MS_NO_VERSION", NULL) != NULL) return ""; // supressing version information
+
   sprintf(version, "MapServer version %s", MS_VERSION);
 
 #if (defined USE_PNG)
@@ -533,9 +531,7 @@ char *msGetVersion()
 #ifdef USE_KML
   strcat(version, " OUTPUT=KML");
 #endif
-#ifdef USE_PROJ
   strcat(version, " SUPPORTS=PROJ");
-#endif
   strcat(version, " SUPPORTS=AGG");
   strcat(version, " SUPPORTS=FREETYPE");
 #ifdef USE_CAIRO
@@ -579,6 +575,9 @@ char *msGetVersion()
 #ifdef USE_SOS_SVR
   strcat(version, " SUPPORTS=SOS_SERVER");
 #endif
+#ifdef USE_OGCAPI_SVR
+  strcat(version, " SUPPORTS=OGCAPI_SERVER");
+#endif
 #ifdef USE_FASTCGI
   strcat(version, " SUPPORTS=FASTCGI");
 #endif
@@ -587,9 +586,6 @@ char *msGetVersion()
 #endif
 #ifdef USE_GEOS
   strcat(version, " SUPPORTS=GEOS");
-#endif
-#ifdef USE_POINT_Z_M
-  strcat(version, " SUPPORTS=POINT_Z_M");
 #endif
 #ifdef USE_V8_MAPSCRIPT
   strcat(version, " SUPPORTS=V8");
@@ -609,13 +605,10 @@ char *msGetVersion()
 #ifdef USE_ORACLESPATIAL
   strcat(version, " INPUT=ORACLESPATIAL");
 #endif
-#ifdef USE_OGR
   strcat(version, " INPUT=OGR");
-#endif
-#ifdef USE_GDAL
   strcat(version, " INPUT=GDAL");
-#endif
   strcat(version, " INPUT=SHAPEFILE");
+  strcat(version, " INPUT=FLATGEOBUF");
   return(version);
 }
 

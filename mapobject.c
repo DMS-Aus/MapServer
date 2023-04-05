@@ -31,12 +31,8 @@
 #include "mapserver.h"
 #include "mapows.h"
 
-#ifdef USE_GDAL
-#  include "gdal.h"
-#  include "cpl_conv.h"
-#endif
-
-
+#include "gdal.h"
+#include "cpl_conv.h"
 
 void freeWeb(webObj *web);
 void freeScalebar(scalebarObj *scalebar);
@@ -51,7 +47,7 @@ void freeLegend(legendObj *legend);
 
 mapObj *msNewMapObj()
 {
-  mapObj *map;
+  mapObj *map = NULL;
 
   /* create an empty map, no layers etc... */
   map = (mapObj *)calloc(sizeof(mapObj),1);
@@ -61,11 +57,15 @@ mapObj *msNewMapObj()
     return NULL;
   }
 
-  if( initMap( map ) == -1 )
+  if( initMap( map ) == -1 ) {
+    msFreeMap(map);
     return NULL;
+  }
 
-  if( msPostMapParseOutputFormatSetup( map ) == MS_FAILURE )
+  if( msPostMapParseOutputFormatSetup( map ) == MS_FAILURE ) {
+    msFreeMap(map);
     return NULL;
+  }
 
   return map;
 }
@@ -95,6 +95,7 @@ void msFreeMap(mapObj *map)
 
   msFreeProjection(&(map->projection));
   msFreeProjection(&(map->latlon));
+  msProjectionContextReleaseToPool(map->projContext);
 
   msFreeLabelCache(&(map->labelcache));
 
@@ -165,9 +166,9 @@ int msSetConfigOption( mapObj *map, const char *key, const char *value)
 {
   /* We have special "early" handling of this so that it will be */
   /* in effect when the projection blocks are parsed and pj_init is called. */
-  if( strcasecmp(key,"PROJ_LIB") == 0 ) {
+  if( strcasecmp(key,"PROJ_DATA") == 0 || strcasecmp(key,"PROJ_LIB") == 0 ) {
     /* value may be relative to map path */
-    msSetPROJ_LIB( value, map->mappath );
+    msSetPROJ_DATA( value, map->mappath );
   }
 
   /* Same for MS_ERRORFILE, we want it to kick in as early as possible
@@ -219,15 +220,13 @@ void msApplyMapConfigOptions( mapObj *map )
        key != NULL;
        key = msNextKeyFromHashTable( &(map->configoptions), key ) ) {
     const char *value = msLookupHashTable( &(map->configoptions), key );
-    if( strcasecmp(key,"PROJ_LIB") == 0 ) {
-      msSetPROJ_LIB( value, map->mappath );
+    if( strcasecmp(key,"PROJ_DATA") == 0 ||
+        strcasecmp(key,"PROJ_LIB") == 0 ) {
+      msSetPROJ_DATA( value, map->mappath );
     } else if( strcasecmp(key,"MS_ERRORFILE") == 0 ) {
       msSetErrorFile( value, map->mappath );
     } else {
-
-#if defined(USE_GDAL) && GDAL_RELEASE_DATE > 20030601
       CPLSetConfigOption( key, value );
-#endif
     }
   }
 }
@@ -439,6 +438,9 @@ int msMapComputeGeotransform( mapObj * map )
 void msMapPixelToGeoref( mapObj *map, double *x, double *y )
 
 {
+  (void)map;
+  (void)x;
+  (void)y;
   msSetError(MS_MISCERR, NULL, "msMapPixelToGeoref() not yet implemented");
 }
 
@@ -449,6 +451,9 @@ void msMapPixelToGeoref( mapObj *map, double *x, double *y )
 void msMapGeorefToPixel( mapObj *map, double *x, double *y )
 
 {
+  (void)map;
+  (void)x;
+  (void)y;
   msSetError(MS_MISCERR, NULL, "msMapGeorefToPixel() not yet implemented");
 }
 
@@ -554,7 +559,7 @@ int msInsertLayer(mapObj *map, layerObj *layer, int nIndex)
     MS_REFCNT_INCR(layer);
     map->numlayers++;
     return map->numlayers-1;
-  } else if (nIndex >= 0 && nIndex < map->numlayers) {
+  } else  {
     /* Move existing layers at the specified nIndex or greater */
     /* to an index one higher */
     int i;
@@ -582,9 +587,6 @@ int msInsertLayer(mapObj *map, layerObj *layer, int nIndex)
     MS_REFCNT_INCR(layer);
     map->numlayers++;
     return nIndex;
-  } else {
-    msSetError(MS_CHILDERR, "Invalid index", "msInsertLayer()");
-    return -1;
   }
 }
 
@@ -646,9 +648,8 @@ layerObj *msRemoveLayer(mapObj *map, int nIndex)
 int msMoveLayerUp(mapObj *map, int nLayerIndex)
 {
   int iCurrentIndex = -1;
-  int i = 0;
   if (map && nLayerIndex < map->numlayers && nLayerIndex >=0) {
-    for (i=0; i<map->numlayers; i++) {
+    for (int i=0; i<map->numlayers; i++) {
       if ( map->layerorder[i] == nLayerIndex) {
         iCurrentIndex = i;
         break;
@@ -678,9 +679,8 @@ int msMoveLayerUp(mapObj *map, int nLayerIndex)
 int msMoveLayerDown(mapObj *map, int nLayerIndex)
 {
   int iCurrentIndex = -1;
-  int i = 0;
   if (map && nLayerIndex < map->numlayers && nLayerIndex >=0) {
-    for (i=0; i<map->numlayers; i++) {
+    for (int i=0; i<map->numlayers; i++) {
       if ( map->layerorder[i] == nLayerIndex) {
         iCurrentIndex = i;
         break;
@@ -720,15 +720,11 @@ int msMoveLayerDown(mapObj *map, int nLayerIndex)
 */
 int msSetLayersdrawingOrder(mapObj *self, int *panIndexes)
 {
-  int nElements = 0;
-  int i, j = 0;
-  int bFound = 0;
-
   if (self && panIndexes) {
-    nElements = self->numlayers;
-    for (i=0; i<nElements; i++) {
-      bFound = 0;
-      for (j=0; j<nElements; j++) {
+    const int nElements = self->numlayers;
+    for (int i=0; i<nElements; i++) {
+      int bFound = 0;
+      for (int j=0; j<nElements; j++) {
         if (panIndexes[j] == i) {
           bFound = 1;
           break;
@@ -740,7 +736,7 @@ int msSetLayersdrawingOrder(mapObj *self, int *panIndexes)
     /* -------------------------------------------------------------------- */
     /*    At this point the array is valid so update the layers order array.*/
     /* -------------------------------------------------------------------- */
-    for (i=0; i<nElements; i++) {
+    for (int i=0; i<nElements; i++) {
       self->layerorder[i] = panIndexes[i];
     }
     return 1;
@@ -765,8 +761,7 @@ int msMapLoadOWSParameters(mapObj *map, cgiRequestObj *request,
   int result, i = 0;
   owsRequestObj ows_request;
 
-  ows_request.numlayers = 0;
-  ows_request.enabled_layers = NULL;
+  msOWSInitRequestObj(&ows_request);
 
 
   version = msOWSParseVersionString(wmtver);
@@ -784,8 +779,7 @@ int msMapLoadOWSParameters(mapObj *map, cgiRequestObj *request,
                                  request->ParamValues, request->NumParams,  wms_exception_format,
                                  wms_request, &ows_request);
 
-  if (ows_request.numlayers > 0)
-    msFree(ows_request.enabled_layers);
+  msOWSClearRequestObj(&ows_request);
 
   return result;
 

@@ -187,8 +187,8 @@ namespace mapserver
         template<class VertexSource>
         void add_path(VertexSource& vs, unsigned path_id=0)
         {
-            double x;
-            double y;
+            double x = 0;
+            double y = 0;
 
             unsigned cmd;
             vs.rewind(path_id);
@@ -306,7 +306,7 @@ namespace mapserver
         coord_type     m_start_x;
         coord_type     m_start_y;
         unsigned       m_status;
-        int            m_scan_y;
+        int            m_scan_y = 0;
     };
 
 

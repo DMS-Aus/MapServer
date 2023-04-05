@@ -45,9 +45,7 @@ typedef struct {
   MS_TIME_RESOLUTION resolution;
 } timeFormatObj;
 
-#define MS_NUMTIMEFORMATS 13
-
-timeFormatObj ms_timeFormats[MS_NUMTIMEFORMATS] = {
+static timeFormatObj ms_timeFormats[] = {
   {"^[0-9]{8}", NULL, "%Y%m%d","YYYYMMDD",TIME_RESOLUTION_DAY},
   {"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z", NULL, "%Y-%m-%dT%H:%M:%SZ","YYYY-MM-DDTHH:MM:SSZ",TIME_RESOLUTION_SECOND},
   {"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}", NULL, "%Y-%m-%dT%H:%M:%S", "YYYY-MM-DDTHH:MM:SS",TIME_RESOLUTION_SECOND},
@@ -60,8 +58,12 @@ timeFormatObj ms_timeFormats[MS_NUMTIMEFORMATS] = {
   {"^[0-9]{4}-[0-9]{2}", NULL, "%Y-%m", "YYYY-MM",TIME_RESOLUTION_MONTH},
   {"^[0-9]{4}", NULL, "%Y", "YYYY",TIME_RESOLUTION_YEAR},
   {"^T[0-9]{2}:[0-9]{2}:[0-9]{2}Z", NULL, "T%H:%M:%SZ", "THH:MM:SSZ",TIME_RESOLUTION_SECOND},
-  {"^T[0-9]{2}:[0-9]{2}:[0-9]{2}", NULL, "T%H:%M:%S", "THH:MM:SS", TIME_RESOLUTION_SECOND}
+  {"^T[0-9]{2}:[0-9]{2}:[0-9]{2}", NULL, "T%H:%M:%S", "THH:MM:SS", TIME_RESOLUTION_SECOND},
+  {"^[0-9]{2}:[0-9]{2}:[0-9]{2}Z", NULL, "%H:%M:%SZ", "HH:MM:SSZ", TIME_RESOLUTION_SECOND},
+  {"^[0-9]{2}:[0-9]{2}:[0-9]{2}", NULL, "%H:%M:%S", "HH:MM:SS", TIME_RESOLUTION_SECOND}
 };
+
+#define MS_NUMTIMEFORMATS (int)(sizeof(ms_timeFormats)/sizeof(ms_timeFormats[0]))
 
 int *ms_limited_pattern = NULL;
 int ms_num_limited_pattern;
@@ -225,7 +227,7 @@ void msUnsetLimitedPatternToUse()
 void msSetLimitedPatternsToUse(const char *patternstring)
 {
   int *limitedpatternindice = NULL;
-  int numpatterns=0, i=0, j=0, ntmp=0;
+  int numpatterns=0, ntmp=0;
   char **patterns = NULL;
   msTimeSetup();
 
@@ -238,8 +240,8 @@ void msSetLimitedPatternsToUse(const char *patternstring)
     patterns = msStringSplit(patternstring, ',', &ntmp);
     if (patterns && ntmp >= 1) {
 
-      for (i=0; i<ntmp; i++) {
-        for (j=0; j<MS_NUMTIMEFORMATS; j++) {
+      for (int i=0; i<ntmp; i++) {
+        for (int j=0; j<MS_NUMTIMEFORMATS; j++) {
           if (strcasecmp( ms_timeFormats[j].userformat, patterns[i]) ==0) {
             limitedpatternindice[numpatterns] = j;
             numpatterns++;
@@ -252,7 +254,7 @@ void msSetLimitedPatternsToUse(const char *patternstring)
   }
 
   if (numpatterns > 0) {
-    for (i=0; i<numpatterns; i++)
+    for (int i=0; i<numpatterns; i++)
       ms_limited_pattern[i] = limitedpatternindice[i];
 
     ms_num_limited_pattern = numpatterns;
@@ -262,7 +264,6 @@ void msSetLimitedPatternsToUse(const char *patternstring)
 
 int msParseTime(const char *string, struct tm *tm)
 {
-  int i, indice = 0;
   int num_patterns = 0;
   
   if(MS_STRING_IS_NULL_OR_EMPTY(string)) return MS_FALSE; /* nothing to parse so bail */
@@ -277,8 +278,9 @@ int msParseTime(const char *string, struct tm *tm)
   else
     num_patterns = MS_NUMTIMEFORMATS;
 
-  for(i=0; i<num_patterns; i++) {
+  for(int i=0; i<num_patterns; i++) {
     int match;
+    int indice;
     if (ms_num_limited_pattern > 0)
       indice = ms_limited_pattern[i];
     else
@@ -339,7 +341,7 @@ int _msValidateTime(const char *timestring,  const char *timeextent)
   if (!timestring || !timeextent)
     return MS_FALSE;
 
-  if (strlen(timestring) <= 0 || strlen(timeextent) <= 0)
+  if (strlen(timestring) == 0 || strlen(timeextent) == 0)
     return MS_FALSE;
 
   /* we first need to parse the timesting that is passed
@@ -455,25 +457,14 @@ int msValidateTimeValue(const char *timestring, const char *timeextent)
   } else {
     atimes = msStringSplit(timestring, ',', &numtimes);
     if (numtimes >=1) { /* multiple times */
-      if (strstr(atimes[0], "/") == NULL) { /* multiple descrete times */
-        for (i=0; i<numtimes; i++) {          
-          if (_msValidateTime(atimes[i], timeextent) == MS_FALSE) {
-            msFreeCharArray(atimes, numtimes);
-            return MS_FALSE;
-          }
+      for (i=0; i<numtimes; i++) {
+        if (_msValidateTime(atimes[i], timeextent) == MS_FALSE) {
+          msFreeCharArray(atimes, numtimes);
+          return MS_FALSE;
         }
-        msFreeCharArray(atimes, numtimes);
-        return MS_TRUE;
-      } else { /* multiple ranges */
-        for (i=0; i<numtimes; i++) {          
-          if (_msValidateTime(atimes[i], timeextent) == MS_FALSE) {
-            msFreeCharArray(atimes, numtimes);
-            return MS_FALSE;
-          }
-        }
-        msFreeCharArray(atimes, numtimes);
-        return MS_TRUE;
       }
+      msFreeCharArray(atimes, numtimes);
+      return MS_TRUE;
     } else {
       msFreeCharArray(atimes,numtimes);
     }

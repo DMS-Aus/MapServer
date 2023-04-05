@@ -28,6 +28,7 @@
  *****************************************************************************/
 
 #include "mapserver.h"
+#include "mapgraph.h"
 
 #ifdef USE_GEOS
 
@@ -53,7 +54,7 @@ static void msGEOSError(const char *format, ...)
 
 static void msGEOSNotice(const char *fmt, ...)
 {
-  return; /* do nothing with notices at this point */
+  (void)fmt; /* do nothing with notices at this point */
 }
 
 #ifndef USE_THREAD
@@ -107,7 +108,7 @@ static GEOSContextHandle_t msGetGeosContextHandle()
   }
 
   /* If the link is not already at the head of the list, promote it */
-  else if( link != NULL && link->next != NULL ) {
+  else {
     geos_thread_info_t *target = link->next;
 
     link->next = link->next->next;
@@ -137,6 +138,7 @@ void msGEOSCleanup()
 {
 #ifndef USE_THREAD
   finishGEOS_r(geos_handle);
+  geos_handle = NULL;
 #else
   geos_thread_info_t *link;
   msAcquireLock( TLOCK_GEOS );
@@ -478,31 +480,23 @@ static shapeObj *msGEOSGeometry2Shape_line(GEOSGeom g)
   return shape;
 }
 
-static shapeObj *msGEOSGeometry2Shape_multiline(GEOSGeom g)
-{
-  int i, j;
-  int numPoints, numLines;
+static void msGEOSGeometry2Shape_multiline_part(GEOSContextHandle_t handle, GEOSGeom part, shapeObj *shape) {
+  int i;
+  int type, numGeometries, numPoints;
   GEOSCoordSeq coords;
-  GEOSGeom lineString;
-
-  shapeObj *shape=NULL;
   lineObj line;
-  GEOSContextHandle_t handle = msGetGeosContextHandle();
+  
+  type = GEOSGeomTypeId_r(handle,part); 
+  if (type == GEOS_MULTILINESTRING) {
+    numGeometries = GEOSGetNumGeometries_r(handle,part);
 
-  if(!g) return NULL;
-  numLines = GEOSGetNumGeometries_r(handle,g);
-
-  shape = (shapeObj *) malloc(sizeof(shapeObj));
-  msInitShape(shape);
-
-  shape->type = MS_SHAPE_LINE;
-  shape->geometry = (GEOSGeom) g;
-
-  for(j=0; j<numLines; j++) {
-    lineString = (GEOSGeom) GEOSGetGeometryN_r(handle,g, j);
-    numPoints = GEOSGetNumCoordinates_r(handle,lineString);
-    coords = (GEOSCoordSeq) GEOSGeom_getCoordSeq_r(handle,lineString);
-
+    for(i=0; i<numGeometries; i++) {
+      GEOSGeom subPart = (GEOSGeom) GEOSGetGeometryN_r(handle, part, i);
+      msGEOSGeometry2Shape_multiline_part(handle, subPart, shape);
+    }
+  } else {
+    numPoints = GEOSGetNumCoordinates_r(handle,part);
+    coords = (GEOSCoordSeq) GEOSGeom_getCoordSeq_r(handle,part);
     line.point = (pointObj *) malloc(sizeof(pointObj)*numPoints);
     line.numpoints = numPoints;
 
@@ -513,6 +507,30 @@ static shapeObj *msGEOSGeometry2Shape_multiline(GEOSGeom g)
     }
 
     msAddLineDirectly(shape, &line);
+  }
+}
+
+static shapeObj *msGEOSGeometry2Shape_multiline(GEOSGeom g)
+{
+  int i;
+  int numGeometries;
+  GEOSGeom part;
+
+  shapeObj *shape=NULL;
+  GEOSContextHandle_t handle = msGetGeosContextHandle();
+
+  if(!g) return NULL;
+  numGeometries = GEOSGetNumGeometries_r(handle,g);
+
+  shape = (shapeObj *) malloc(sizeof(shapeObj));
+  msInitShape(shape);
+
+  shape->type = MS_SHAPE_LINE;
+  shape->geometry = (GEOSGeom) g;
+
+  for(i=0; i<numGeometries; i++) {
+    part = (GEOSGeom) GEOSGetGeometryN_r(handle, g, i);
+    msGEOSGeometry2Shape_multiline_part(handle, part, shape);
   }
 
   msComputeBounds(shape);
@@ -673,21 +691,16 @@ shapeObj *msGEOSGeometry2Shape(GEOSGeom g)
     case GEOS_GEOMETRYCOLLECTION:
       if (!GEOSisEmpty_r(handle,g))
       {
-        int i, j, numGeoms;
-        shapeObj* shape;
-
-        numGeoms = GEOSGetNumGeometries_r(handle,g);
-
-        shape = (shapeObj *) malloc(sizeof(shapeObj));
+        shapeObj* shape = (shapeObj *) malloc(sizeof(shapeObj));
         msInitShape(shape);
         shape->type = MS_SHAPE_LINE;
         shape->geometry = (GEOSGeom) g;
-        
-        numGeoms = GEOSGetNumGeometries_r(handle,g);
-        for(i = 0; i < numGeoms; i++) { /* for each geometry */
+
+        const int numGeoms = GEOSGetNumGeometries_r(handle,g);
+        for(int i = 0; i < numGeoms; i++) { /* for each geometry */
            shapeObj* shape2 = msGEOSGeometry2Shape((GEOSGeom)GEOSGetGeometryN_r(handle,g, i));
            if (shape2) {
-              for (j = 0; j < shape2->numlines; j++)
+              for (int j = 0; j < shape2->numlines; j++)
                  msAddLineDirectly(shape, &shape2->line[j]);
               shape2->numlines = 0;
               shape2->geometry = NULL; /* not owned */
@@ -791,20 +804,60 @@ void msGEOSFreeWKT(char* pszGEOSWKT)
 
 shapeObj *msGEOSOffsetCurve(shapeObj *p, double offset) {
 #if defined USE_GEOS && (GEOS_VERSION_MAJOR > 3 || (GEOS_VERSION_MAJOR == 3 && GEOS_VERSION_MINOR >= 3))
-  GEOSGeom g1, g2;
+  int typeChanged = 0;
+  GEOSGeom g1, g2 = NULL;
   GEOSContextHandle_t handle = msGetGeosContextHandle();
 
   if(!p) 
     return NULL;
 
-  if(!p->geometry) /* if no geometry for the shape then build one */
+  /*
+   * GEOSOffsetCurve_r() uses BufferBuilder.bufferLineSingleSided(), which
+   * works with lines, naturally. In order to allow offsets for a MapServer
+   * polygonObj, it has to be processed as line and afterwards reverted.
+   */
+  if(p->type == MS_SHAPE_POLYGON) {
+    p->type = MS_SHAPE_LINE;
+    typeChanged = 1;
+    msGEOSFreeGeometry(p);
+  }
+
+  if(typeChanged || !p->geometry)
     p->geometry = (GEOSGeom) msGEOSShape2Geometry(p);
 
   g1 = (GEOSGeom) p->geometry;
   if(!g1) return NULL;
   
-  g2 = GEOSOffsetCurve_r(handle,g1, offset, 4, GEOSBUF_JOIN_MITRE, fabs(offset*1.5));
-  return msGEOSGeometry2Shape(g2);
+  if (GEOSGeomTypeId_r(handle,g1) == GEOS_MULTILINESTRING)
+  {
+    GEOSGeom *lines = malloc(p->numlines*sizeof(GEOSGeom));
+    if (!lines) return NULL;
+    for(int i=0; i<p->numlines; i++)
+    {
+      lines[i] = GEOSOffsetCurve_r(handle, GEOSGetGeometryN_r(handle,g1,i),
+                                   offset, 4, GEOSBUF_JOIN_MITRE, fabs(offset*1.5));
+    }
+    g2 = GEOSGeom_createCollection_r(handle,GEOS_MULTILINESTRING, lines, p->numlines);
+    free(lines);
+  }
+  else
+  {
+    g2 = GEOSOffsetCurve_r(handle,g1, offset, 4, GEOSBUF_JOIN_MITRE, fabs(offset*1.5));
+  }
+
+  /*
+   * Undo change of geometry type. We won't re-create the geos gemotry here,
+   * it's up to each geos function to create it.
+   */
+  if(typeChanged) {
+    msGEOSFreeGeometry(p);
+    p->type = MS_SHAPE_POLYGON;
+  }
+
+  if (g2)
+    return msGEOSGeometry2Shape(g2);
+
+  return NULL;
 #else
   msSetError(MS_GEOSERR, "GEOS Offset Curve support is not available.", "msGEOSingleSidedBuffer()");
   return NULL;
@@ -1065,6 +1118,209 @@ shapeObj *msGEOSSymDifference(shapeObj *shape1, shapeObj *shape2)
   return msGEOSGeometry2Shape(g3);
 #else
   msSetError(MS_GEOSERR, "GEOS support is not available.", "msGEOSSymDifference()");
+  return NULL;
+#endif
+}
+
+shapeObj *msGEOSLineMerge(shapeObj *shape)
+{
+#ifdef USE_GEOS
+  GEOSGeom g1, g2;
+  GEOSContextHandle_t handle = msGetGeosContextHandle();
+
+  if(!shape) return NULL;
+  if(shape->type != MS_SHAPE_LINE) return NULL;
+
+  if(!shape->geometry) /* if no geometry for the shape then build one */
+    shape->geometry = (GEOSGeom) msGEOSShape2Geometry(shape);
+  g1 = (GEOSGeom) shape->geometry;
+  if(!g1) return NULL;
+
+  g2 = GEOSLineMerge_r(handle, g1);
+  return msGEOSGeometry2Shape(g2);
+#else
+  msSetError(MS_GEOSERR, "GEOS support is not available.", "msGEOSLineMerge()");
+  return NULL;
+#endif
+}
+
+shapeObj *msGEOSVoronoiDiagram(shapeObj *shape, double tolerance, int onlyEdges)
+{
+#if defined(USE_GEOS) && (GEOS_VERSION_MAJOR > 3 || (GEOS_VERSION_MAJOR == 3 && GEOS_VERSION_MINOR >= 5))
+  GEOSGeom g1, g2;
+  GEOSContextHandle_t handle = msGetGeosContextHandle();
+
+  if(!shape) return NULL;
+
+  if(!shape->geometry) /* if no geometry for the shape then build one */
+    shape->geometry = (GEOSGeom) msGEOSShape2Geometry(shape);
+  g1 = (GEOSGeom) shape->geometry;
+  if(!g1) return NULL;
+
+  g2 = GEOSVoronoiDiagram_r(handle, g1, NULL, tolerance, onlyEdges);
+  return msGEOSGeometry2Shape(g2);
+#else
+  msSetError(MS_GEOSERR, "GEOS support is not available or GEOS version is not 3.5 or higher.", "msGEOSVoronoiDiagram()");
+  return NULL;
+#endif
+}
+
+static int keepEdge(lineObj *segment, shapeObj *polygon)
+{
+  int i,j;
+
+  if(segment->numpoints<2) return MS_FALSE;
+  if(msIntersectPointPolygon(&segment->point[0], polygon) != MS_TRUE) return MS_FALSE;
+  if(msIntersectPointPolygon(&segment->point[1], polygon) != MS_TRUE) return MS_FALSE;
+
+  for(i=0; i<polygon->numlines; i++)
+    for(j=1; j<polygon->line[i].numpoints; j++)
+      if(msIntersectSegments(&(segment->point[0]), &(segment->point[1]), &(polygon->line[i].point[j-1]), &(polygon->line[i].point[j])) ==  MS_TRUE)
+        return(MS_FALSE);
+
+  return(MS_TRUE);
+}
+
+#define ARE_SAME_POINTS(a,b) (((a).x!=(b).x || (a).y!=(b).y)?MS_FALSE:MS_TRUE)
+
+// returns the index of the node, we use z to store a count of points at the same coordinate
+static int buildNodes(multipointObj *nodes, pointObj *point)
+{
+  int i;
+
+  for(i=0; i<nodes->numpoints; i++) {
+    if(ARE_SAME_POINTS(nodes->point[i], *point)) { // found it
+      nodes->point[i].z++;
+      return i;
+    }
+  }
+
+  // not found, add it
+  nodes->point[i].x = point->x;
+  nodes->point[i].y = point->y;
+  nodes->point[i].z = 1;
+  nodes->numpoints++;
+
+  return i;
+}
+
+shapeObj *msGEOSCenterline(shapeObj *shape)
+{
+#if defined(USE_GEOS) && (GEOS_VERSION_MAJOR > 3 || (GEOS_VERSION_MAJOR == 3 && GEOS_VERSION_MINOR >= 5))
+  int i;
+  shapeObj *shape2=NULL;
+
+  multipointObj nodes;
+  graphObj *graph;
+
+  int *path=NULL; // array of node indexes
+  int path_size=0;
+  double path_dist=-1, max_path_dist=-1;
+
+  if(!shape) return NULL;
+  if(shape->type != MS_SHAPE_POLYGON) {
+    msSetError(MS_GEOSERR, "Centerlines can only be computed for polygon shapes.", "msGEOSCenterline()");
+    return NULL;
+  }
+
+  shape2 = msGEOSVoronoiDiagram(shape, 0.0, MS_TRUE);
+  if(!shape2) {
+    msSetError(MS_GEOSERR, "Voronoi diagram generation failed.", "msGEOSCenterline()");
+    return NULL;
+  }
+
+  // process the edges and build a graph representation
+  nodes.point = (pointObj *) malloc(shape2->numlines*sizeof(pointObj)*2);
+  nodes.numpoints = 0;
+  if(!nodes.point) {
+    msFreeShape(shape2);
+    free(shape2);
+    return NULL;
+  }
+
+  graph = msCreateGraph(shape2->numlines*2);
+  if(!graph) {
+    msFreeShape(shape2);
+    free(shape2);
+    free(nodes.point);
+    return NULL;
+  }
+
+  for(i=0; i<shape2->numlines; i++) {
+    if(keepEdge(&shape2->line[i], shape) == MS_TRUE) {
+      int src = buildNodes(&nodes, &shape2->line[i].point[0]);
+      int dest = buildNodes(&nodes, &shape2->line[i].point[1]);
+      msGraphAddEdge(graph, src, dest, msDistancePointToPoint(&shape2->line[i].point[0], &shape2->line[i].point[1]));
+    }
+  }
+  msFreeShape(shape2); // done with voronoi geometry, shape2 is still allocated though, just empty
+  shape2->type = MS_SHAPE_LINE; // will fill with centerline
+
+  if(nodes.numpoints == 0) {
+    msSetError(MS_GEOSERR, "Centerline generation failed, try densifying the shapes.", "msGEOSCenterline()");
+    free(shape2);
+    msFreeGraph(graph);
+    free(nodes.point);
+    return NULL;
+  }
+
+  // step through edge nodes (z=1)
+  for(i=0; i<nodes.numpoints; i++) {
+    if(nodes.point[i].z != 1) continue; // skip
+
+    if(!path) { // first one, keep this path
+      path = msGraphGetLongestShortestPath(graph, i, &path_size, &path_dist);
+      max_path_dist = path_dist;
+    } else {
+      int *tmp_path=NULL;
+      int tmp_path_size=0;
+      double tmp_path_dist=-1;
+
+      if(i == path[path_size-1]) continue; // skip, graph is bi-directional so it can't be any longer
+      tmp_path = msGraphGetLongestShortestPath(graph, i, &tmp_path_size, &tmp_path_dist);
+      if(tmp_path_dist > max_path_dist) {
+        free(path);
+        path = tmp_path;
+        path_size = tmp_path_size;
+        path_dist = tmp_path_dist;
+        max_path_dist = tmp_path_dist;
+      } else { // skip path
+        msFree(tmp_path);
+      }
+    }
+  }
+  msFreeGraph(graph); // done with graph
+
+  // transform the path into a shape
+  if(!path) {
+    msSetError(MS_GEOSERR, "Centerline generation failed.", "msGEOSCenterline()");
+    free(shape2);
+    free(nodes.point);
+    return NULL;
+  } else {
+    lineObj line;
+    line.point = (pointObj *) malloc(path_size*sizeof(pointObj));
+    if(!line.point) {
+      free(shape2);
+      free(path);
+      free(nodes.point);
+      return NULL;
+    }
+    line.numpoints = path_size;
+
+    for(i=0; i<path_size; i++) {
+      line.point[i].x = nodes.point[path[i]].x;
+      line.point[i].y = nodes.point[path[i]].y;
+    }
+    msAddLineDirectly(shape2, &line);
+  }
+
+  free(path); // clean up
+  free(nodes.point);
+
+  return shape2;
+#else
+  msSetError(MS_GEOSERR, "GEOS support is not available or GEOS version is not 3.5 or higher.", "msGEOSCenterline()");
   return NULL;
 #endif
 }

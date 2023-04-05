@@ -224,17 +224,20 @@
   }
 %}
 
+#if SWIG_VERSION < 0x040000
 %typemap(csfinalize) SWIGTYPE %{
   /* %typemap(csfinalize) SWIGTYPE */
   ~$csclassname() {
     Dispose();
   }
 %}
+#endif
 
 %typemap(csconstruct, excode=SWIGEXCODE) SWIGTYPE %{: this($imcall, true, null) {$excode
   }
 %}
 
+#if SWIG_VERSION < 0x040000
 %typemap(csdestruct, methodname="Dispose", methodmodifiers="public") SWIGTYPE {
   lock(this) {
       if(swigCPtr.Handle != System.IntPtr.Zero && swigCMemOwn) {
@@ -246,6 +249,7 @@
       System.GC.SuppressFinalize(this);
     }
   }
+#endif
 
 %typemap(csdestruct_derived, methodname="Dispose", methodmodifiers="public") TYPE {
   lock(this) {
@@ -285,11 +289,17 @@ extern "C"
 #endif
 #ifdef SWIGEXPORT
 SWIGEXPORT int SWIGSTDCALL SetEnvironmentVariable(const char *envstring) {
-  return putenv(envstring);
+  /* putenv may not make a copy, so do it ourselves despite the memory leak */
+  char* envstringDup = (char*)malloc(strlen(envstring)+1);
+  memcpy(envstringDup, envstring, strlen(envstring)+1);
+  return putenv(envstringDup);
 }
 #else
 DllExport int SWIGSTDCALL SetEnvironmentVariable(const char *envstring) {
-  return putenv(envstring);
+  /* putenv may not make a copy, so do it ourselves despite the memory leak */
+  char* envstringDup = (char*)malloc(strlen(envstring)+1);
+  memcpy(envstringDup, envstring, strlen(envstring)+1);
+  return putenv(envstringDup);
 }
 #endif
 %}

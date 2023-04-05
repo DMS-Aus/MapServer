@@ -906,6 +906,7 @@ int selectClusterShape(layerObj* layer, long shapeindex)
     ++i;
     current = current->next;
   }
+  assert(current);
 
   current->next = current->siblings;
   layerinfo->current = current;
@@ -997,10 +998,11 @@ int RebuildClusters(layerObj *layer, int isQuery)
   int status;
   clusterInfo* current;
   int depth;
-  char *pszProcessing;
+  const char *pszProcessing;
 #ifdef USE_CLUSTER_EXTERNAL
   int layerIndex;
 #endif
+  reprojectionObj* reprojector = NULL;
 
   msClusterLayerInfo* layerinfo = layer->layerinfo;
 
@@ -1070,10 +1072,8 @@ int RebuildClusters(layerObj *layer, int isQuery)
   layerinfo->searchRect = searchrect;
 
   /* reproject the rectangle to layer coordinates */
-#ifdef USE_PROJ
   if((map->projection.numargs > 0) && (layer->projection.numargs > 0))
     msProjectRect(&map->projection, &layer->projection, &searchrect); /* project the searchrect to source coords */
-#endif
 
   /* determine the compare method */
   layerinfo->fnCompare = CompareRectangleRegion;
@@ -1133,11 +1133,18 @@ int RebuildClusters(layerObj *layer, int isQuery)
   if ((current = clusterInfoCreate(layerinfo)) == NULL)
     return MS_FAILURE;
 
-  while((status = msLayerNextShape(srcLayer, &current->shape)) == MS_SUCCESS) {
-#if defined(USE_PROJ) && defined(USE_CLUSTER_EXTERNAL)
-    /* transform the shape to the projection of this layer */
+#if defined(USE_CLUSTER_EXTERNAL)
     if(srcLayer->transform == MS_TRUE && srcLayer->project && layer->transform == MS_TRUE && layer->project &&msProjectionsDiffer(&(srcLayer->projection), &(layer->projection)))
-      msProjectShape(&srcLayer->projection, &layer->projection, &current->shape);
+    {
+        reprojector = msProjectCreateReprojector(&srcLayer->projection, &layer->projection);
+    }
+#endif
+  
+  while((status = msLayerNextShape(srcLayer, &current->shape)) == MS_SUCCESS) {
+#if defined(USE_CLUSTER_EXTERNAL)
+    /* transform the shape to the projection of this layer */
+    if( reprojector )
+      msProjectShapeEx(reprojector, &current->shape);
 #endif
     /* set up positions and variance */
     current->avgx = current->x = current->shape.bounds.minx;
@@ -1173,6 +1180,7 @@ int RebuildClusters(layerObj *layer, int isQuery)
       /* add this shape to the tree */
       if (treeNodeAddShape(layerinfo, layerinfo->root, current, depth) != MS_SUCCESS) {
         clusterInfoDestroyList(layerinfo, current);
+        msProjectDestroyReprojector(reprojector);
         return MS_FAILURE;
       }
     }
@@ -1190,6 +1198,7 @@ int RebuildClusters(layerObj *layer, int isQuery)
         /* if not found add this shape as a new cluster */
         if (treeNodeAddShape(layerinfo, layerinfo->root, current, depth) != MS_SUCCESS) {
           clusterInfoDestroyList(layerinfo, current);
+          msProjectDestroyReprojector(reprojector);
           return MS_FAILURE;
         }
       }
@@ -1197,9 +1206,12 @@ int RebuildClusters(layerObj *layer, int isQuery)
 
     if ((current = clusterInfoCreate(layerinfo)) == NULL) {
       clusterInfoDestroyList(layerinfo, current);
+      msProjectDestroyReprojector(reprojector);
       return MS_FAILURE;
     }
   }
+
+  msProjectDestroyReprojector(reprojector);
 
   clusterInfoDestroyList(layerinfo, current);
 
@@ -1374,7 +1386,8 @@ int msClusterLayerClose(layerObj *layer)
 
 #ifndef USE_CLUSTER_EXTERNAL
   /* switch back to the source layer vtable */
-  msInitializeVirtualTable(layer);
+  if( msInitializeVirtualTable(layer) != MS_SUCCESS )
+      return MS_FAILURE;
 #endif
 
   return MS_SUCCESS;
@@ -1469,12 +1482,14 @@ int msClusterLayerInitItemInfo(layerObj *layer)
 /* Execute a query for this layer */
 int msClusterLayerWhichShapes(layerObj *layer, rectObj rect, int isQuery)
 {
+  (void)rect;
   /* rebuild the cluster database */
   return RebuildClusters(layer, isQuery);
 }
 
 static int prepareShape(layerObj* layer, msClusterLayerInfo* layerinfo, clusterInfo* current, shapeObj* shape)
 {
+  (void)layer;
   if (msCopyShape(&(current->shape), shape) != MS_SUCCESS) {
     msSetError(MS_SHPERR, "Cannot retrieve inline shape. There some problem with the shape", "msClusterLayerNextShape()");
     return MS_FAILURE;
@@ -1566,6 +1581,10 @@ int msClusterLayerGetNumFeatures(layerObj *layer)
 static int msClusterLayerGetAutoStyle(mapObj *map, layerObj *layer, classObj *c,
                                       shapeObj* shape)
 {
+  (void)map;
+  (void)layer;
+  (void)c;
+  (void)shape;
   /* TODO */
   return MS_SUCCESS;
 }
@@ -1654,6 +1673,7 @@ int msClusterLayerOpen(layerObj *layer)
     if (msInitializeVirtualTable(layer) != MS_SUCCESS)
       return MS_FAILURE;
   }
+  assert(layer->vtable);
   msClusterLayerCopyVirtualTable(layer->vtable);
 
   if (msCopyLayer(&layerinfo->srcLayer, layer) != MS_SUCCESS)
@@ -1678,6 +1698,7 @@ int msClusterLayerOpen(layerObj *layer)
 
 int msClusterLayerTranslateFilter(layerObj *layer, expressionObj *filter, char *filteritem)
 {
+  (void)filter;
   msClusterLayerInfo* layerinfo = layer->layerinfo;
 
   if (!layerinfo) {
@@ -1717,12 +1738,14 @@ int msClusterLayerGetAutoProjection(layerObj *layer, projectionObj* projection)
 
 int msClusterLayerGetPaging(layerObj *layer)
 {
+  (void)layer;
   return MS_FALSE;
 }
 
 void msClusterLayerEnablePaging(layerObj *layer, int value)
 {
-  return;
+  (void)layer;
+  (void)value;
 }
 
 void msClusterLayerCopyVirtualTable(layerVTableObj* vtable)

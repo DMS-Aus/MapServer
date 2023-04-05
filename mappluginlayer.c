@@ -92,7 +92,6 @@ insertNewVTFItem(VTFactoryObj *pVTFactory,
    * (safe to use for initial alloc of the array as well)
    */
   if (pVTFactory->first_free == pVTFactory->size) {
-    int i;
     VTFactoryItemObj **vtItemPtr;
     vtItemPtr = (VTFactoryItemObj**)realloc(pVTFactory->vtItems,
                                             (pVTFactory->size+MS_LAYER_ALLOCSIZE)*sizeof(VTFactoryItemObj*));
@@ -102,7 +101,7 @@ insertNewVTFItem(VTFactoryObj *pVTFactory,
     pVTFactory->size += MS_LAYER_ALLOCSIZE;
     pVTFactory->vtItems = vtItemPtr;
 
-    for (i=pVTFactory->first_free; i<pVTFactory->size; i++)
+    for (unsigned i=pVTFactory->first_free; i<pVTFactory->size; i++)
       pVTFactory->vtItems[i] = NULL;
   }
 
@@ -187,6 +186,10 @@ msPluginLayerInitializeVirtualTable(layerObj *layer)
 {
   VTFactoryItemObj *pVTFI;
 
+  if (!layer->plugin_library){
+      return MS_FAILURE;
+  }
+
   msAcquireLock(TLOCK_LAYER_VTABLE);
 
   pVTFI = lookupVTFItem(&gVirtualTableFactory, layer->plugin_library);
@@ -214,10 +217,9 @@ msPluginLayerInitializeVirtualTable(layerObj *layer)
 void
 msPluginFreeVirtualTableFactory()
 {
-  int i;
   msAcquireLock(TLOCK_LAYER_VTABLE);
 
-  for (i=0; i<gVirtualTableFactory.size; i++) {
+  for (unsigned i=0; i<gVirtualTableFactory.size; i++) {
     if (gVirtualTableFactory.vtItems[i])
       destroyVTFItem(&(gVirtualTableFactory.vtItems[i]));
   }

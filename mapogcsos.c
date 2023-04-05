@@ -284,7 +284,7 @@ void msSOSAddPropertyNode(xmlNsPtr psNsSwe, xmlNsPtr psNsXLink, xmlNodePtr psPar
     pszValue = msOWSLookupMetadata(&(lp->metadata), "S",
                                    "observedproperty_name");
     if (pszValue)
-      psNode = xmlNewTextChild(psCompNode, psNsGml,
+      (void) xmlNewTextChild(psCompNode, psNsGml,
                            BAD_CAST "name", BAD_CAST pszValue);
 
     /* add components */
@@ -362,7 +362,15 @@ void  msSOSAddGeometryNode(xmlNsPtr psNsGml, xmlNsPtr psNsMs, xmlNodePtr psParen
 
   if (psParent && psShape) {
     if (msProjectionsDiffer(&map->projection, &lp->projection) == MS_TRUE) {
-      msProjectShape(&lp->projection, &map->projection, psShape);
+      if( lp->reprojectorLayerToMap == NULL )
+      {
+        lp->reprojectorLayerToMap = msProjectCreateReprojector(
+            &lp->projection, &map->projection);
+      }
+      if( lp->reprojectorLayerToMap )
+      {
+        msProjectShapeEx(lp->reprojectorLayerToMap, psShape);
+      }
       msOWSGetEPSGProj(&(map->projection), &(lp->metadata), "SO", MS_TRUE, &pszEpsg_buf);
       pszEpsg = pszEpsg_buf;
     }
@@ -770,11 +778,19 @@ void msSOSAddMemberNode(xmlNsPtr psNsGml, xmlNsPtr psNsOm, xmlNsPtr psNsSwe, xml
       <om:result uom="units.xml#cm">29.00</om:result> */
 
 
-
-#ifdef USE_PROJ
     if(msProjectionsDiffer(&(lp->projection), &(map->projection)))
-      msProjectShape(&lp->projection, &lp->projection, &sShape);
-#endif
+    {
+      if( lp->reprojectorLayerToMap == NULL )
+      {
+        lp->reprojectorLayerToMap = msProjectCreateReprojector(
+            &lp->projection, &map->projection);
+      }
+      if( lp->reprojectorLayerToMap )
+      {
+        msProjectShapeEx(lp->reprojectorLayerToMap, &sShape);
+      }
+    }
+
     psNode = xmlNewChild(psNode, psNsGml, BAD_CAST "featureMember", NULL);
     /* xmlSetNs(psNode,xmlNewNs(psNode, BAD_CAST "http://www.opengis.net/gml", BAD_CAST "gml")); */
 
@@ -790,14 +806,14 @@ void msSOSAddMemberNode(xmlNsPtr psNsGml, xmlNsPtr psNsOm, xmlNsPtr psNsSwe, xml
       xmlSetNs(psLayerNode,psNsMs);
 
     /*bbox*/
-#ifdef USE_PROJ
+
     msOWSGetEPSGProj(&(map->projection), &(lp->metadata), "SO", MS_TRUE, &pszEpsg);
     if (!pszEpsg)
       msOWSGetEPSGProj(&(lp->projection), &(lp->metadata), "SO", MS_TRUE, &pszEpsg);
 
     if (msProjectionsDiffer(&map->projection, &lp->projection) == MS_TRUE)
       msProjectRect(&lp->projection, &map->projection, &sShape.bounds);
-#endif
+
     psNode = xmlAddChild(psLayerNode, msGML3BoundedBy(psNsGml, sShape.bounds.minx, sShape.bounds.miny, sShape.bounds.maxx, sShape.bounds.maxy, pszEpsg));
 
     /*geometry*/
@@ -886,7 +902,7 @@ char* msSOSReturnMemberResult(layerObj *lp, int iFeatureId, char **ppszProcedure
       }
     }
   }
-  if (ppszProcedure) {
+  if (ppszProcedure && sShape.values) {
     pszProcedureField = msOWSLookupMetadata(&(lp->metadata), "S", "procedure_item");
     for(i=0; i<lp->numitems; i++) {
       if (strcasecmp(lp->items[i], pszProcedureField) == 0) {
@@ -904,8 +920,9 @@ char* msSOSReturnMemberResult(layerObj *lp, int iFeatureId, char **ppszProcedure
                                               "observedproperty_id"));
 
 
-  if (lp == lpfirst || (lpfirst && msLayerOpen(lpfirst) == MS_SUCCESS &&
-                        msLayerGetItems(lpfirst) == MS_SUCCESS)) {
+  if (sShape.values &&
+      (lp == lpfirst || (lpfirst && msLayerOpen(lpfirst) == MS_SUCCESS &&
+                        msLayerGetItems(lpfirst) == MS_SUCCESS))) {
     pszSep = msOWSLookupMetadata(&(lp->map->web.metadata), "S",
                                  "encoding_tokenSeparator");
     for(i=0; i<lpfirst->numitems; i++) {
@@ -941,7 +958,8 @@ char* msSOSReturnMemberResult(layerObj *lp, int iFeatureId, char **ppszProcedure
 /*      Add a member node used for getObservation request using         */
 /*      Observation as the result format.                               */
 /************************************************************************/
-xmlNodePtr msSOSAddMemberNodeObservation(xmlNsPtr psNsGml, xmlNsPtr psNsSos, xmlNsPtr psNsOm, xmlNsPtr psNsSwe, xmlNsPtr psNsXLink, xmlNodePtr psParent, mapObj *map, layerObj *lp, const char *pszProcedure)
+static
+xmlNodePtr msSOSAddMemberNodeObservation(xmlNsPtr psNsGml, xmlNsPtr psNsOm, xmlNsPtr psNsSwe, xmlNsPtr psNsXLink, xmlNodePtr psParent, mapObj *map, layerObj *lp, const char *pszProcedure)
 {
   char *pszTmp = NULL;
   xmlNodePtr psNode=NULL, psObsNode=NULL, psMemberNode=NULL;
@@ -1240,7 +1258,8 @@ int msSOSGetCapabilities(mapObj *map, sosParamsObj *sosparams, cgiRequestObj *re
   xsi_schemaLocation = msStringConcatenate(xsi_schemaLocation, "/sosGetCapabilities.xsd");
   xmlNewNsProp(psRootNode, NULL, BAD_CAST "xsi:schemaLocation", BAD_CAST xsi_schemaLocation);
 
-  xmlAddChild(psRootNode, xmlNewComment(BAD_CAST msGetVersion()));
+  const char *version = msGetVersion();
+  if(version[0] != '\0') xmlAddChild(psRootNode, xmlNewComment(BAD_CAST version));
 
   /*service identification*/
   xmlAddChild(psRootNode, msOWSCommonServiceIdentification(psNsOws, map, "SOS", pszSOSVersion, "SO", NULL));
@@ -1251,7 +1270,11 @@ int msSOSGetCapabilities(mapObj *map, sosParamsObj *sosparams, cgiRequestObj *re
   /*operation metadata */
 
   if ((script_url=msOWSGetOnlineResource(map, "SO", "onlineresource", req)) == NULL)
+  {
+    free(xsi_schemaLocation);
+    free(schemalocation);
     return msSOSException(map, "NoApplicableCode", "NoApplicableCode");
+  }
 
   psMainNode = xmlAddChild(psRootNode, msOWSCommonOperationsMetadata(psNsOws));
 
@@ -1922,10 +1945,8 @@ this request. Check sos/ows_enable_request settings.", "msSOSGetObservation()", 
             /* HACK END */
 
             pszBuffer = NULL;
-            if (&lp->filter) {
-              if (lp->filter.string && strlen(lp->filter.string) > 0)
-                msFreeExpression(&lp->filter);
-            }
+            if (lp->filter.string && strlen(lp->filter.string) > 0)
+              msFreeExpression(&lp->filter);
 
             /*The filter should reflect the underlying db*/
             /*for ogr add a where clause */
@@ -2124,6 +2145,7 @@ this request. Check sos/ows_enable_request settings.", "msSOSGetObservation()", 
 
             /* project MAP.EXTENT to this SRS */
             msInitProjection(&po);
+            msProjectionInheritContextFrom(&po, &map->projection);
 
             snprintf(srsbuffer, sizeof(srsbuffer), "+init=epsg:%.20s", sosparams->pszSrsName+strlen("EPSG:"));
 
@@ -2260,7 +2282,10 @@ this request. Check sos/ows_enable_request settings.", "msSOSGetObservation()", 
   schemalocation = msEncodeHTMLEntities(msOWSGetSchemasLocation(map));
 
   if ((script_url=msOWSGetOnlineResource(map, "SO", "onlineresource", req)) == NULL)
+  {
+    free(schemalocation);
     return msSOSException(map, "NoApplicableCode", "NoApplicableCode");
+  }
 
   xsi_schemaLocation = msStrdup("http://www.opengis.net/om/1.0 ");
   xsi_schemaLocation = msStringConcatenate(xsi_schemaLocation, schemalocation);
@@ -2385,7 +2410,7 @@ this request. Check sos/ows_enable_request settings.", "msSOSGetObservation()", 
             layer defined using sos_procedure)*/
           if (msOWSLookupMetadata(&(GET_LAYER(map, i)->metadata), "S", "procedure_item") == NULL) {
             pszProcedure = msOWSLookupMetadata(&(lp->metadata), "S", "procedure");
-            psObservationNode = msSOSAddMemberNodeObservation(psNsGml, psNsSos, psNsOm, psNsSwe, psNsXLink, psRootNode, map, (GET_LAYER(map, i)),
+            psObservationNode = msSOSAddMemberNodeObservation(psNsGml, psNsOm, psNsSwe, psNsXLink, psRootNode, map, (GET_LAYER(map, i)),
                                 pszProcedure);
             /*add a result node*/
             psResultNode = xmlNewChild(psObservationNode, NULL, BAD_CAST "result", NULL);
@@ -2444,7 +2469,7 @@ this request. Check sos/ows_enable_request settings.", "msSOSGetObservation()", 
                                    *nDiffrentProc);
 
                 paDiffrentProc[nDiffrentProc-1].pszProcedure = msStrdup(pszProcedureValue);
-                psObservationNode = msSOSAddMemberNodeObservation(psNsGml, psNsSos, psNsOm, psNsSwe, psNsXLink, psRootNode, map,
+                psObservationNode = msSOSAddMemberNodeObservation(psNsGml, psNsOm, psNsSwe, psNsXLink, psRootNode, map,
                                     (GET_LAYER(map, i)),
                                     pszProcedureValue);
 
@@ -2916,15 +2941,21 @@ int msSOSParseRequest(mapObj *map, cgiRequestObj *request, sosParamsObj *sospara
     if (psXPathTmp)
       sosparams->pszRequest = msStrdup("GetCapabilities");
 
+    xmlXPathFreeObject(psXPathTmp);
+
     psXPathTmp = msLibXml2GetXPath(doc, context, (xmlChar *)"/sos:DescribeSensor");
 
     if (psXPathTmp)
       sosparams->pszRequest = msStrdup("DescribeSensor");
 
+    xmlXPathFreeObject(psXPathTmp);
+
     psXPathTmp = msLibXml2GetXPath(doc, context, (xmlChar *)"/sos:GetObservation");
 
     if (psXPathTmp)
       sosparams->pszRequest = msStrdup("GetObservation");
+
+    xmlXPathFreeObject(psXPathTmp);
 
     psXPathTmp = msLibXml2GetXPath(doc, context, (xmlChar *)"/sos:DescribeObservationType");
 

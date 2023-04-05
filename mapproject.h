@@ -37,10 +37,12 @@
 extern "C" {
 #endif
 
-/* workaround to allow compiling against Proj 6.x (#5766) */
-#define ACCEPT_USE_OF_DEPRECATED_PROJ_API_H 1
-
-#ifdef USE_PROJ
+#if PROJ_VERSION_MAJOR >= 6
+#  include <proj.h>
+#if PROJ_VERSION_MAJOR == 6 && PROJ_VERSION_MINOR == 0
+#error "PROJ 6.0 is not supported. Use PROJ 6.1 or later"
+#endif
+#else
 #  include <proj_api.h>
 #if PJ_VERSION >= 470 && PJ_VERSION < 480
    void pj_clear_initcache();
@@ -51,45 +53,98 @@ extern "C" {
 #define wkp_lonlat 1
 #define wkp_gmerc 2
 
+typedef struct projectionContext projectionContext;
 
+#ifndef SWIG
+typedef enum
+{
+    LINE_CUTTING_UNKNOWN = -1,
+    LINE_CUTTING_NONE = 0,
+    LINE_CUTTING_FROM_POLAR = 1,
+    LINE_CUTTING_FROM_LONGLAT_WRAP0 = 2
+} msLineCuttingCase;
+#endif
+
+/**
+The :ref:`PROJECTION <projection>` object
+MapServer's Maps and Layers have Projection attributes, and these are C projectionObj structures, 
+but are not directly exposed by the mapscript module
+*/
   typedef struct {
+#ifndef SWIG
+      char **args; /* variable number of projection args */
+#if PROJ_VERSION_MAJOR >= 6
+      PJ* proj;
+      projectionContext* proj_ctx;
+#else
+      projPJ proj; /* a projection structure for the PROJ package */
+#if PJ_VERSION >= 480
+      projCtx proj_ctx;
+#endif
+#endif
+      geotransformObj gt; /* extra transformation to apply */
+#endif
+
 #ifdef SWIG
     %immutable;
 #endif
-    int numargs; /* actual number of projection args */
-    int automatic; /* projection object was to fetched from the layer */
+    int numargs; ///< Actual number of projection args
+    int automatic; ///< Projection object was to fetched from the layer
 #ifdef SWIG
     %mutable;
 #endif
-#ifndef SWIG
-    char **args; /* variable number of projection args */
-#ifdef USE_PROJ
-    projPJ proj; /* a projection structure for the PROJ package */
-#if PJ_VERSION >= 480
-    projCtx proj_ctx;
-#endif
-#else
-    void *proj;
-#endif
-    geotransformObj gt; /* extra transformation to apply */
-#endif
-    int wellknownprojection;
+
+    int wellknownprojection; ///< One of ``wkp_none 0``, ``wkp_lonlat 1``, or ``wkp_gmerc 2``
   } projectionObj;
 
+  typedef struct {
+#if PROJ_VERSION_MAJOR >= 6
+#ifndef SWIG
+    projectionObj* in;
+    projectionObj* out;
+    PJ* pj;
+    msLineCuttingCase lineCuttingCase;
+    shapeObj splitShape;
+    int bFreePJ;
+#endif
+#else
+#ifndef SWIG
+    projectionObj* in;
+    projectionObj* out;
+    msLineCuttingCase lineCuttingCase;
+    shapeObj splitShape;
+    int no_op;
+#endif
+#endif
+  } reprojectionObj;
+
 #ifndef SWIG
 
+  MS_DLL_EXPORT reprojectionObj* msProjectCreateReprojector(projectionObj* in, projectionObj* out);
+  MS_DLL_EXPORT void msProjectDestroyReprojector(reprojectionObj* reprojector);
+
+  MS_DLL_EXPORT projectionContext* msProjectionContextGetFromPool(void);
+  MS_DLL_EXPORT void msProjectionContextReleaseToPool(projectionContext* ctx);
+  MS_DLL_EXPORT void msProjectionContextPoolCleanup(void);
+
   MS_DLL_EXPORT int msIsAxisInverted(int epsg_code);
-  MS_DLL_EXPORT int msProjectPoint(projectionObj *in, projectionObj *out, pointObj *point);
-  MS_DLL_EXPORT int msProjectShape(projectionObj *in, projectionObj *out, shapeObj *shape);
-  MS_DLL_EXPORT int msProjectLine(projectionObj *in, projectionObj *out, lineObj *line);
-  MS_DLL_EXPORT int msProjectRect(projectionObj *in, projectionObj *out, rectObj *rect);
+  MS_DLL_EXPORT int msProjectPoint(projectionObj *in, projectionObj *out, pointObj *point); /* legacy interface */
+  MS_DLL_EXPORT int msProjectPointEx(reprojectionObj* reprojector, pointObj *point);
+  MS_DLL_EXPORT int msProjectShape(projectionObj *in, projectionObj *out, shapeObj *shape); /* legacy interface */
+  MS_DLL_EXPORT int msProjectShapeEx(reprojectionObj* reprojector, shapeObj *shape);
+  MS_DLL_EXPORT int msProjectLine(projectionObj *in, projectionObj *out, lineObj *line); /* legacy interface */
+  MS_DLL_EXPORT int msProjectLineEx(reprojectionObj* reprojector, lineObj *line);
+  MS_DLL_EXPORT int msProjectRect(projectionObj *in, projectionObj *out, rectObj *rect); /* legacy interface */
+  MS_DLL_EXPORT int msProjectRectAsPolygon(reprojectionObj* reprojector, rectObj *rect);
   MS_DLL_EXPORT int msProjectionsDiffer(projectionObj *, projectionObj *);
-  MS_DLL_EXPORT int msOGCWKT2ProjectionObj( const char *pszWKT, projectionObj *proj, int
-      debug_flag );
+  MS_DLL_EXPORT int msOGCWKT2ProjectionObj( const char *pszWKT, projectionObj *proj, int debug_flag );
   MS_DLL_EXPORT char *msProjectionObj2OGCWKT( projectionObj *proj );
 
   MS_DLL_EXPORT void msFreeProjection(projectionObj *p);
+  MS_DLL_EXPORT void msFreeProjectionExceptContext(projectionObj *p);
   MS_DLL_EXPORT int msInitProjection(projectionObj *p);
+  MS_DLL_EXPORT void msProjectionInheritContextFrom(projectionObj *pDst, const projectionObj* pSrc);
+  MS_DLL_EXPORT void msProjectionSetContext(projectionObj *p, projectionContext* ctx);
   MS_DLL_EXPORT int msProcessProjection(projectionObj *p);
   MS_DLL_EXPORT int msLoadProjectionString(projectionObj *p, const char *value);
   MS_DLL_EXPORT int msLoadProjectionStringEPSG(projectionObj *p, const char *value);
@@ -101,12 +156,13 @@ extern "C" {
   MS_DLL_EXPORT void msAxisDenormalizePoints( projectionObj *proj, int count,
       double *x, double *y );
 
-  MS_DLL_EXPORT void msSetPROJ_LIB( const char *, const char * );
-  MS_DLL_EXPORT void msProjLibInitFromEnv();
+  MS_DLL_EXPORT void msSetPROJ_DATA( const char *, const char * );
+  MS_DLL_EXPORT void msProjDataInitFromEnv();
 
-  /* Provides compatiblity with PROJ.4 4.4.2 */
-#ifndef PJ_VERSION
-#  define pj_is_latlong(x)  ((x)->is_latlong)
+  int msProjIsGeographicCRS(projectionObj* proj);
+#if PROJ_VERSION_MAJOR >= 6
+  int msProjectTransformPoints( reprojectionObj* reprojector,
+                                int npoints, double* x, double* y );
 #endif
 
   /*utility functions */

@@ -211,7 +211,7 @@ namespace mapserver
     {
         AGG_INLINE static unsigned mul(unsigned a, unsigned b)
         {
-            register unsigned q = a * b + (1 << (Shift-1));
+            const unsigned q = a * b + (1 << (Shift-1));
             return (q + (q >> Shift)) >> Shift;
         }
     };
@@ -485,8 +485,8 @@ namespace mapserver
     template<class T> struct point_base
     {
         typedef T value_type;
-        T x,y;
-        point_base() {}
+        T x = 0,y = 0;
+        point_base() = default;
         point_base(T x_, T y_) : x(x_), y(y_) {}
     };
     typedef point_base<int>    point_i; //-----point_i

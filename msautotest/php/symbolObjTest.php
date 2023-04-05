@@ -1,20 +1,22 @@
 <?php
 
-class SymbolObjTest extends PHPUnit_Framework_TestCase
+class symbolObjTest extends \PHPUnit\Framework\TestCase
 {
     protected $symbol;
+    protected $map;
+    protected $outputFrmt;
 
-    public function setUp()
+    public function setUp(): void
     {
-        $map = new mapObj('maps/labels.map');
-        $this->symbol = $map->getSymbolObjectById($map->getSymbolByName("plant"));
+        $this->map = new mapObj('maps/labels.map');
+        $this->symbol = $this->map->symbolset->getSymbolByName("plant");
+        $this->outputFrmt = new outputFormatObj('AGG/PNG', 'theName');
     }
 
     public function testSetGetImage()
     {
-        $outputFrmt = new outputFormatObj('AGG/PNG', 'theName');
         //$this->assertInstanceOf('imageObj', $image = $this->symbol->getImage($outputFrmt));
-        $image = $this->symbol->getImage($outputFrmt);
+        $image = $this->symbol->getImage($this->outputFrmt);
         $this->symbol->setImage($image);
     }
 
@@ -45,8 +47,16 @@ class SymbolObjTest extends PHPUnit_Framework_TestCase
 
     public function test_setgetMiny()
     {
-        $this->assertEquals(5.0, $this->symbol->minx = 5.0);
+        $this->assertEquals(5.0, $this->symbol->miny = 5.0);
     }
+    
+    # destroy variables, if not can lead to segmentation fault
+    public function tearDown(): void {
+        unset($this->map);
+        unset($this->symbol);
+        unset($this->outputFrmt);
+    }    
+    
 }
 
 ?>

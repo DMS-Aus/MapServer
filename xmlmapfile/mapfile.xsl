@@ -809,9 +809,6 @@
       <xsl:with-param name="indent" select="$indent"/>
       <xsl:with-param name="node" select="'ms:antialias'"/>
     </xsl:call-template>
-    <xsl:apply-templates select="ms:backgroundColor">
-      <xsl:with-param name="indent" select="$indent"/>
-    </xsl:apply-templates>
     <xsl:apply-templates select="ms:color">
       <xsl:with-param name="indent" select="$indent"/>
     </xsl:apply-templates>
@@ -897,6 +894,22 @@
       <xsl:with-param name="indent" select="$indent - 1"/>
     </xsl:call-template>
   </xsl:template>
+  
+  <xsl:template match="ms:CompoSite">
+    <xsl:param name="indent"/>
+	<xsl:call-template name="print">
+      <xsl:with-param name="text" select="'COMPOSITE'"/>
+      <xsl:with-param name="indent" select="$indent - 1"/>
+    </xsl:call-template>
+	<xsl:call-template name="print">
+      <xsl:with-param name="indent" select="$indent"/>
+      <xsl:with-param name="node" select="'ms:Opacity'"/>
+    </xsl:call-template>
+	<xsl:call-template name="print">
+      <xsl:with-param name="indent" select="$indent"/>
+      <xsl:with-param name="node" select="'ms:Compop'"/>
+    </xsl:call-template>
+  <xsl:template>
   
   <xsl:template match="ms:Class">
     <xsl:param name="indent"/>
@@ -1216,6 +1229,9 @@
     <xsl:apply-templates select="ms:Class">
       <xsl:with-param name="indent" select="$indent + 1"/>
     </xsl:apply-templates>
+    <xsl:apply-templates select="ms:CompoSite">
+      <xsl:with-param name="indent" select="$indent + 1"/>
+    </xsl:apply-templates>
     <xsl:call-template name="print">
       <xsl:with-param name="indent" select="$indent"/>
       <xsl:with-param name="node" select="'ms:classGroup'"/>
@@ -1243,10 +1259,6 @@
     <xsl:call-template name="print">
       <xsl:with-param name="indent" select="$indent"/>
       <xsl:with-param name="node" select="'ms:debug'"/>
-    </xsl:call-template>
-    <xsl:call-template name="print">
-      <xsl:with-param name="indent" select="$indent"/>
-      <xsl:with-param name="node" select="'ms:dump'"/>
     </xsl:call-template>
     <xsl:call-template name="print">
       <xsl:with-param name="indent" select="$indent"/>

@@ -353,7 +353,7 @@ xmlNodePtr msOWSCommonOperationsMetadata(xmlNsPtr psNsOws)
  * @return psRootNode xmlNodePtr pointer of XML construct
  */
 
-xmlNodePtr msOWSCommonOperationsMetadataOperation(xmlNsPtr psNsOws, xmlNsPtr psXLinkNs, char *name, int method, char *url)
+xmlNodePtr msOWSCommonOperationsMetadataOperation(xmlNsPtr psNsOws, xmlNsPtr psXLinkNs, const char *name, int method, const char *url)
 {
   xmlNodePtr psRootNode      = NULL;
   xmlNodePtr psNode          = NULL;
@@ -405,7 +405,7 @@ xmlNodePtr msOWSCommonOperationsMetadataOperation(xmlNsPtr psNsOws, xmlNsPtr psX
  *
  */
 
-xmlNodePtr msOWSCommonOperationsMetadataDomainType(int version, xmlNsPtr psNsOws, char *elname, char *name, char *values)
+xmlNodePtr msOWSCommonOperationsMetadataDomainType(int version, xmlNsPtr psNsOws, const char *elname, const char *name, const char *values)
 {
   xmlNodePtr psRootNode = NULL;
   xmlNodePtr psNode = NULL;
@@ -589,8 +589,8 @@ xmlNodePtr msOWSCommonWGS84BoundingBox(xmlNsPtr psNsOws, int dimensions, double 
   snprintf( dim_string, sizeof(dim_string), "%d", dimensions );
   xmlNewProp(psRootNode, BAD_CAST "dimensions", BAD_CAST dim_string);
 
-  snprintf(LowerCorner, sizeof(LowerCorner), "%.15g %.15g", minx, miny);
-  snprintf(UpperCorner, sizeof(UpperCorner), "%.15g %.15g", maxx, maxy);
+  snprintf(LowerCorner, sizeof(LowerCorner), "%.6f %.6f", minx, miny);
+  snprintf(UpperCorner, sizeof(UpperCorner), "%.6f %.6f", maxx, maxy);
 
   /* add child elements */
   xmlNewChild(psRootNode, psNsOws,BAD_CAST "LowerCorner",BAD_CAST LowerCorner);
@@ -646,52 +646,60 @@ int msOWSSchemaValidation(const char* xml_schema, const char* xml)
       strcmp(xml_schema + strlen(xml_schema) -
             strlen(MS_OWSCOMMON_WFS_20_SCHEMA_LOCATION), MS_OWSCOMMON_WFS_20_SCHEMA_LOCATION) == 0 )
   {
-    char szInMemSchema[2048];
-    char szBaseLocation[256];
+    const size_t nLenBaseLocation = strlen(xml_schema) - strlen(MS_OWSCOMMON_WFS_20_SCHEMA_LOCATION);
+    char* pszInMemSchema = NULL;
+    char* pszBaseLocation = (char*)msSmallMalloc(nLenBaseLocation + 1);
+    memcpy(pszBaseLocation, xml_schema, nLenBaseLocation);
+    pszBaseLocation[nLenBaseLocation] = '\0';
 
-    strncpy(szBaseLocation, xml_schema, strlen(xml_schema) - strlen(MS_OWSCOMMON_WFS_20_SCHEMA_LOCATION));
-    szBaseLocation[strlen(xml_schema) - strlen(MS_OWSCOMMON_WFS_20_SCHEMA_LOCATION)] = '\0';
+    pszInMemSchema = msStringConcatenate(pszInMemSchema,
+        "<schema elementFormDefault=\"qualified\" version=\"1.0.0\" "
+        "xmlns=\"http://www.w3.org/2001/XMLSchema\">\n");
 
-    strcpy(szInMemSchema, "<schema elementFormDefault=\"qualified\" version=\"1.0.0\" "
-                          "xmlns=\"http://www.w3.org/2001/XMLSchema\">\n");
-
-    sprintf(szInMemSchema + strlen(szInMemSchema),
-            "<import namespace=\"%s\" schemaLocation=\"%s\" />\n",
-            MS_OWSCOMMON_WFS_20_NAMESPACE_URI, xml_schema);
+    pszInMemSchema = msStringConcatenate(pszInMemSchema,
+        "<import namespace=\"" MS_OWSCOMMON_WFS_20_NAMESPACE_URI "\" schemaLocation=\"");
+    pszInMemSchema = msStringConcatenate(pszInMemSchema, xml_schema);
+    pszInMemSchema = msStringConcatenate(pszInMemSchema, "\" />\n");
 
     if( strstr(xml, MS_OWSCOMMON_FES_20_NAMESPACE_URI) != NULL )
     {
-        sprintf(szInMemSchema + strlen(szInMemSchema),
-                "<import namespace=\"%s\" schemaLocation=\"%s%s\" />\n",
-                MS_OWSCOMMON_FES_20_NAMESPACE_URI, szBaseLocation, MS_OWSCOMMON_FES_20_SCHEMA_LOCATION);
+        pszInMemSchema = msStringConcatenate(pszInMemSchema,
+            "<import namespace=\"" MS_OWSCOMMON_FES_20_NAMESPACE_URI "\" schemaLocation=\"");
+        pszInMemSchema = msStringConcatenate(pszInMemSchema, pszBaseLocation);
+        pszInMemSchema = msStringConcatenate(pszInMemSchema, MS_OWSCOMMON_FES_20_SCHEMA_LOCATION "\" />\n");
     }
 
     if( strstr(xml, MS_OWSCOMMON_GML_32_NAMESPACE_URI) != NULL )
     {
-        sprintf(szInMemSchema + strlen(szInMemSchema),
-                "<import namespace=\"%s\" schemaLocation=\"%s%s\" />\n",
-                MS_OWSCOMMON_GML_32_NAMESPACE_URI, szBaseLocation, MS_OWSCOMMON_GML_321_SCHEMA_LOCATION);
+        pszInMemSchema = msStringConcatenate(pszInMemSchema,
+            "<import namespace=\"" MS_OWSCOMMON_GML_32_NAMESPACE_URI "\" schemaLocation=\"");
+        pszInMemSchema = msStringConcatenate(pszInMemSchema, pszBaseLocation);
+        pszInMemSchema = msStringConcatenate(pszInMemSchema, MS_OWSCOMMON_GML_321_SCHEMA_LOCATION "\" />\n");
+
     }
     else if( strstr(xml, MS_OWSCOMMON_GML_NAMESPACE_URI) != NULL )
     {
         if( strstr(xml, MS_OWSCOMMON_GML_212_SCHEMA_LOCATION) != NULL )
         {
-            sprintf(szInMemSchema + strlen(szInMemSchema),
-                    "<import namespace=\"%s\" schemaLocation=\"%s%s\" />\n",
-                    MS_OWSCOMMON_GML_NAMESPACE_URI, szBaseLocation, MS_OWSCOMMON_GML_212_SCHEMA_LOCATION);
+            pszInMemSchema = msStringConcatenate(pszInMemSchema,
+                "<import namespace=\"" MS_OWSCOMMON_GML_NAMESPACE_URI "\" schemaLocation=\"");
+            pszInMemSchema = msStringConcatenate(pszInMemSchema, pszBaseLocation);
+            pszInMemSchema = msStringConcatenate(pszInMemSchema, MS_OWSCOMMON_GML_212_SCHEMA_LOCATION "\" />\n");
         }
         else if( strstr(xml, MS_OWSCOMMON_GML_311_SCHEMA_LOCATION) != NULL )
         {
-            sprintf(szInMemSchema + strlen(szInMemSchema),
-                    "<import namespace=\"%s\" schemaLocation=\"%s%s\" />\n",
-                    MS_OWSCOMMON_GML_NAMESPACE_URI, szBaseLocation, MS_OWSCOMMON_GML_311_SCHEMA_LOCATION);
+            pszInMemSchema = msStringConcatenate(pszInMemSchema,
+                "<import namespace=\"" MS_OWSCOMMON_GML_NAMESPACE_URI "\" schemaLocation=\"");
+            pszInMemSchema = msStringConcatenate(pszInMemSchema, pszBaseLocation);
+            pszInMemSchema = msStringConcatenate(pszInMemSchema, MS_OWSCOMMON_GML_311_SCHEMA_LOCATION "\" />\n");
         }
     }
 
-    strcat(szInMemSchema, "</schema>\n");
-    /*fprintf(stderr, "%s\n", szInMemSchema);*/
+    pszInMemSchema = msStringConcatenate(pszInMemSchema, "</schema>\n");
 
-    ctxt = xmlSchemaNewMemParserCtxt(szInMemSchema, strlen(szInMemSchema));
+    ctxt = xmlSchemaNewMemParserCtxt(pszInMemSchema, strlen(pszInMemSchema));
+    msFree(pszInMemSchema);
+    msFree(pszBaseLocation);
   }
   else
   {

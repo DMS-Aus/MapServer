@@ -32,32 +32,13 @@ from .testing import TEST_IMAGE as test_image
 from .testing import MapTestCase
 
 
-have_image = 0
+have_image = False
 
 try:
     from PIL import Image
-    have_image = 1
+    have_image = True
 except ImportError:
     pass
-
-
-class SaveToStringTestCase(MapTestCase):
-    def testSaveToString(self):
-        """test that an image can be saved as a string"""
-        msimg = self.map.draw()
-        assert msimg.thisown == 1
-        data = msimg.saveToString()
-        filename = 'testSaveToString.png'
-        fh = open(filename, 'wb')
-        fh.write(data)
-        fh.close()
-        if have_image:
-            pyimg = Image.open(filename)
-            assert pyimg.format == 'PNG'
-            assert pyimg.size == (200, 200)
-            assert pyimg.mode == 'RGB'
-        else:
-            assert 1
 
 
 class ImageObjTestCase(unittest.TestCase):
@@ -139,8 +120,6 @@ class ImageWriteTestCase(MapTestCase):
             assert pyimg.format == 'PNG'
             assert pyimg.size == (200, 200)
             assert pyimg.mode == 'RGB'
-        else:
-            assert 1
 
     def testImageWriteBytesIO(self):
         """image writes data to a BytesIO instance"""
@@ -158,8 +137,6 @@ class ImageWriteTestCase(MapTestCase):
             assert pyimg.format == 'PNG'
             assert pyimg.size == (200, 200)
             assert pyimg.mode == 'RGB'
-        else:
-            assert 1
 
     def testImageGetBytes(self):
         """image returns bytes"""
@@ -176,8 +153,6 @@ class ImageWriteTestCase(MapTestCase):
             assert pyimg.format == 'PNG'
             assert pyimg.size == (200, 200)
             assert pyimg.mode == 'RGB'
-        else:
-            assert 1
 
 
 if __name__ == '__main__':

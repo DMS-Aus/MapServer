@@ -1,6 +1,6 @@
 find_package(SWIG REQUIRED)
 include(${SWIG_USE_FILE})
-if(WIN32 AND (${CMAKE_VERSION} EQUAL "3.12.0") OR (${CMAKE_VERSION} EQUAL "3.12.1") OR (${CMAKE_VERSION} EQUAL "3.12.2") OR (${CMAKE_VERSION} EQUAL "3.12.3"))
+if(WIN32 AND ((${CMAKE_VERSION} EQUAL "3.12.0") OR (${CMAKE_VERSION} EQUAL "3.12.1") OR (${CMAKE_VERSION} EQUAL "3.12.2") OR (${CMAKE_VERSION} EQUAL "3.12.3")))
     message(FATAL_ERROR "Building with CMAKE ${CMAKE_VERSION} will not work. Please downgrade to 3.11.x or update to a higher version than 3.12.3")
 endif()
 
@@ -84,4 +84,8 @@ set_target_properties(${SWIG_MODULE_mapscript_REAL_NAME} PROPERTIES PREFIX "")
 
 if(NOT WIN32)
   install(TARGETS php_mapscriptng DESTINATION ${PHP_EXTENSION_DIR})
+  # check if we must install the required file containing MapServer constants and functions
+  if(${SWIG_VERSION} LESS_EQUAL 4.0.2)
+     install(FILES ${CMAKE_CURRENT_BINARY_DIR}/mapscript.php DESTINATION ${PHP_EXTENSION_DIR} COMPONENT dev)
+  endif()
 endif()

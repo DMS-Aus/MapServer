@@ -1,12 +1,10 @@
 /* ===========================================================================
-   $Id$
-
    Project:  MapServer
    Purpose:  SWIG interface file for mapscript clusterObj extensions
    Author:   Tamas Szekeres
-
+             Seth Girvin
    ===========================================================================
-   Copyright (c) 1996-2007 Regents of the University of Minnesota.
+   Copyright (c) 1996-2019 Regents of the University of Minnesota.
 
    Permission is hereby granted, free of charge, to any person obtaining a
    copy of this software and associated documentation files (the "Software"),
@@ -30,17 +28,23 @@
 
 %extend clusterObj
 {
+
+
+  /// Update a cluster from a string snippet. Returns :data:`MS_SUCCESS` or :data:`MS_FAILURE`
   int updateFromString(char *snippet)
   {
     return msUpdateClusterFromString(self, snippet);
   }
-  
+
   %newobject convertToString;
+  /// Output the :ref:`cluster` as a Mapfile string
   char* convertToString()
   {
     return msWriteClusterToString(self);
   }
-  
+
+  /// Set :ref:`GROUP <mapfile-cluster-group>` string where `group` is a MapServer text expression.
+  /// Returns :data:`MS_SUCCESS` or :data:`MS_FAILURE`
   int setGroup(char *group) 
   {
     if (!group || strlen(group) == 0) {
@@ -51,18 +55,22 @@
   }
 
   %newobject getGroupString;
+  /// Return a string representation of :ref:`GROUP <mapfile-cluster-group>`
   char *getGroupString() {
     return msGetExpressionString(&(self->group));
   }
 
+  /// Set :ref:`FILTER <mapfile-cluster-filter>` string where `filter` is a MapServer text expression.
+  /// Returns :data:`MS_SUCCESS` or :data:`MS_FAILURE`
   int setFilter(char *filter) {
     if (!filter || strlen(filter) == 0) {
       msFreeExpression(&self->filter);
       return MS_SUCCESS;
-    }	
+    }
     else return msLoadExpressionString(&self->filter, filter);
   }
 
+  /// Return a string representation of :ref:`FILTER <mapfile-cluster-filter>`
   %newobject getFilterString;
   char *getFilterString() {
     return msGetExpressionString(&(self->filter));

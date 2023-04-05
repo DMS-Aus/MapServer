@@ -34,7 +34,7 @@
 
 #include "mapserver.h"
 
-
+#include "cpl_conv.h"
 
 
 /**********************************************************************
@@ -193,7 +193,10 @@ int msGenerateEncryptionKey(unsigned char *k)
   srand( (unsigned int) time( NULL ));
 
   for(i=0; i<MS_ENCRYPTION_KEY_SIZE; i++)
+  {
+    /* coverity[dont_call] */
     k[i] = (unsigned char)rand();
+  }
 
   return MS_SUCCESS;
 }
@@ -267,9 +270,7 @@ static int msLoadEncryptionKey(mapObj *map)
     return MS_SUCCESS;  /* Already loaded */
 
   keyfile = msGetConfigOption(map, "MS_ENCRYPTION_KEY");
-
-  if (keyfile == NULL)
-    keyfile = getenv("MS_ENCRYPTION_KEY");
+  if(!keyfile) keyfile = CPLGetConfigOption("MS_ENCRYPTION_KEY", NULL);
 
   if (keyfile &&
       msReadEncryptionKeyFromFile(keyfile,map->encryption_key) == MS_SUCCESS) {

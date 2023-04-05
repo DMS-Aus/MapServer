@@ -28,22 +28,11 @@
  * DEALINGS IN THE SOFTWARE.
  ****************************************************************************/
 
-#define _FILE_OFFSET_BITS 64
-
 #include "mapserver.h"
 #include <stdlib.h> /* for atof() and atoi() */
 #include <math.h>
 
-
-
-/* try to use a large file version of fseek for files up to 4GB (#3514) */
-#if _MSC_VER > 1310
-#  define safe_fseek _fseeki64
-#elif defined(fseeko)
-#  define safe_fseek fseeko
-#else
-#  define safe_fseek fseek
-#endif
+#include "cpl_vsi.h"
 
 static inline void IGUR_sizet(size_t ignored) { (void)ignored; }  /* Ignore GCC Unused Result */
 
@@ -98,9 +87,9 @@ static void writeHeader(DBFHandle psDBF)
   /*      Write the initial 32 byte file header, and all the field        */
   /*      descriptions.                                             */
   /* -------------------------------------------------------------------- */
-  fseek( psDBF->fp, 0, 0 );
-  fwrite( abyHeader, 32, 1, psDBF->fp );
-  fwrite( psDBF->pszHeader, 32, psDBF->nFields, psDBF->fp );
+  VSIFSeekL( psDBF->fp, 0, 0 );
+  VSIFWriteL( abyHeader, 32, 1, psDBF->fp );
+  VSIFWriteL( psDBF->pszHeader, 32, psDBF->nFields, psDBF->fp );
 
   /* -------------------------------------------------------------------- */
   /*      Write out the newline character if there is room for it.        */
@@ -109,7 +98,7 @@ static void writeHeader(DBFHandle psDBF)
     char  cNewline;
 
     cNewline = 0x0d;
-    fwrite( &cNewline, 1, 1, psDBF->fp );
+    VSIFWriteL( &cNewline, 1, 1, psDBF->fp );
   }
 }
 
@@ -129,64 +118,23 @@ static void flushRecord( DBFHandle psDBF )
     nRecordOffset = psDBF->nRecordLength * psDBF->nCurrentRecord
                     + psDBF->nHeaderLength;
 
-    safe_fseek( psDBF->fp, nRecordOffset, 0 );
-    fwrite( psDBF->pszCurrentRecord, psDBF->nRecordLength, 1, psDBF->fp );
+    VSIFSeekL( psDBF->fp, nRecordOffset, 0 );
+    VSIFWriteL( psDBF->pszCurrentRecord, psDBF->nRecordLength, 1, psDBF->fp );
   }
 }
 
-/************************************************************************/
-/*                              msDBFOpen()                             */
-/*                                                                      */
-/*      Open a .dbf file.                                               */
-/************************************************************************/
-DBFHandle msDBFOpen( const char * pszFilename, const char * pszAccess )
-
+DBFHandle msDBFOpenVirtualFile( VSILFILE * fp )
 {
   DBFHandle   psDBF;
   uchar   *pabyBuf;
   int     nFields, nRecords, nHeadLen, nRecLen, iField;
-  char          *pszDBFFilename;
-
-  /* -------------------------------------------------------------------- */
-  /*      We only allow the access strings "rb" and "r+".                 */
-  /* -------------------------------------------------------------------- */
-  if( strcmp(pszAccess,"r") != 0 && strcmp(pszAccess,"r+") != 0
-      && strcmp(pszAccess,"rb") != 0 && strcmp(pszAccess,"r+b") != 0 )
-    return( NULL );
-
-  /* -------------------------------------------------------------------- */
-  /*  Ensure the extension is converted to dbf or DBF if it is      */
-  /*  currently .shp or .shx.               */
-  /* -------------------------------------------------------------------- */
-  pszDBFFilename = (char *) msSmallMalloc(strlen(pszFilename)+1);
-  strcpy( pszDBFFilename, pszFilename );
-
-  if( strcmp(pszFilename+strlen(pszFilename)-4,".shp") == 0
-      || strcmp(pszFilename+strlen(pszFilename)-4,".shx") == 0 ) {
-    strcpy( pszDBFFilename+strlen(pszDBFFilename)-4, ".dbf");
-  } else if( strcmp(pszFilename+strlen(pszFilename)-4,".SHP") == 0
-             || strcmp(pszFilename+strlen(pszFilename)-4,".SHX") == 0 ) {
-    strcpy( pszDBFFilename+strlen(pszDBFFilename)-4, ".DBF");
-  }
 
   /* -------------------------------------------------------------------- */
   /*      Open the file.                                                  */
   /* -------------------------------------------------------------------- */
   psDBF = (DBFHandle) calloc( 1, sizeof(DBFInfo) );
   MS_CHECK_ALLOC(psDBF, sizeof(DBFInfo), NULL);
-  psDBF->fp = fopen( pszDBFFilename, pszAccess );
-  if( psDBF->fp == NULL )
-  {
-    if( strcmp(pszDBFFilename+strlen(pszDBFFilename)-4,".dbf") == 0 ) {
-      strcpy( pszDBFFilename+strlen(pszDBFFilename)-4, ".DBF");
-      psDBF->fp = fopen( pszDBFFilename, pszAccess );
-    }
-  }
-  if( psDBF->fp == NULL ) {
-    msFree(pszDBFFilename);
-    msFree(psDBF);
-    return( NULL );
-  }
+  psDBF->fp = fp;
 
   psDBF->bNoHeader = MS_FALSE;
   psDBF->nCurrentRecord = -1;
@@ -195,14 +143,13 @@ DBFHandle msDBFOpen( const char * pszFilename, const char * pszAccess )
   psDBF->pszStringField = NULL;
   psDBF->nStringFieldLen = 0;
 
-  free( pszDBFFilename );
-
   /* -------------------------------------------------------------------- */
   /*  Read Table Header info                                              */
   /* -------------------------------------------------------------------- */
   pabyBuf = (uchar *) msSmallMalloc(500);
-  if( fread( pabyBuf, 32, 1, psDBF->fp ) != 1 )
+  if( VSIFReadL( pabyBuf, 32, 1, psDBF->fp ) != 1 )
   {
+    VSIFCloseL( psDBF->fp );
     msFree(psDBF);
     msFree(pabyBuf);
     return( NULL );
@@ -214,6 +161,13 @@ DBFHandle msDBFOpen( const char * pszFilename, const char * pszAccess )
   psDBF->nHeaderLength = nHeadLen = pabyBuf[8] + pabyBuf[9]*256;
   psDBF->nRecordLength = nRecLen = pabyBuf[10] + pabyBuf[11]*256;
 
+  if (nHeadLen <= 32) {
+    VSIFCloseL( psDBF->fp );
+    msFree(psDBF);
+    msFree(pabyBuf);
+    return( NULL );
+  }
+
   psDBF->nFields = nFields = (nHeadLen - 32) / 32;
 
   psDBF->pszCurrentRecord = (char *) msSmallMalloc(nRecLen);
@@ -224,10 +178,11 @@ DBFHandle msDBFOpen( const char * pszFilename, const char * pszAccess )
   pabyBuf = (uchar *) SfRealloc(pabyBuf,nHeadLen);
   psDBF->pszHeader = (char *) pabyBuf;
 
-  fseek( psDBF->fp, 32, 0 );
-  if( fread( pabyBuf, nHeadLen - 32, 1, psDBF->fp ) != 1 )
+  VSIFSeekL( psDBF->fp, 32, 0 );
+  if( VSIFReadL( pabyBuf, nHeadLen - 32, 1, psDBF->fp ) != 1 )
   {
     msFree(psDBF->pszCurrentRecord);
+    VSIFCloseL( psDBF->fp );
     msFree(psDBF);
     msFree(pabyBuf);
     return( NULL );
@@ -263,6 +218,55 @@ DBFHandle msDBFOpen( const char * pszFilename, const char * pszAccess )
 }
 
 /************************************************************************/
+/*                              msDBFOpen()                             */
+/*                                                                      */
+/*      Open a .dbf file.                                               */
+/************************************************************************/
+DBFHandle msDBFOpen( const char * pszFilename, const char * pszAccess )
+
+{
+  /* -------------------------------------------------------------------- */
+  /*      We only allow the access strings "rb" and "r+".                 */
+  /* -------------------------------------------------------------------- */
+  if( strcmp(pszAccess,"r") != 0 && strcmp(pszAccess,"r+") != 0
+      && strcmp(pszAccess,"rb") != 0 && strcmp(pszAccess,"r+b") != 0 )
+    return( NULL );
+
+  /* -------------------------------------------------------------------- */
+  /*  Ensure the extension is converted to dbf or DBF if it is      */
+  /*  currently .shp or .shx.               */
+  /* -------------------------------------------------------------------- */
+  char *pszDBFFilename = (char *) msSmallMalloc(strlen(pszFilename)+1);
+  strcpy( pszDBFFilename, pszFilename );
+
+  if( strcmp(pszFilename+strlen(pszFilename)-4,".shp") == 0
+      || strcmp(pszFilename+strlen(pszFilename)-4,".shx") == 0 ) {
+    strcpy( pszDBFFilename+strlen(pszDBFFilename)-4, ".dbf");
+  } else if( strcmp(pszFilename+strlen(pszFilename)-4,".SHP") == 0
+             || strcmp(pszFilename+strlen(pszFilename)-4,".SHX") == 0 ) {
+    strcpy( pszDBFFilename+strlen(pszDBFFilename)-4, ".DBF");
+  }
+
+  /* -------------------------------------------------------------------- */
+  /*      Open the file.                                                  */
+  /* -------------------------------------------------------------------- */
+  VSILFILE *fp = VSIFOpenL( pszDBFFilename, pszAccess );
+  if( fp == NULL )
+  {
+    if( strcmp(pszDBFFilename+strlen(pszDBFFilename)-4,".dbf") == 0 ) {
+      strcpy( pszDBFFilename+strlen(pszDBFFilename)-4, ".DBF");
+      fp = VSIFOpenL( pszDBFFilename, pszAccess );
+    }
+  }
+  msFree(pszDBFFilename);
+  if( fp == NULL ) {
+    return( NULL );
+  }
+
+  return msDBFOpenVirtualFile(fp);
+}
+
+/************************************************************************/
 /*                              msDBFClose()                            */
 /************************************************************************/
 
@@ -283,8 +287,8 @@ void  msDBFClose(DBFHandle psDBF)
   if( psDBF->bUpdated ) {
     uchar   abyFileHeader[32];
 
-    fseek( psDBF->fp, 0, 0 );
-    IGUR_sizet(fread( abyFileHeader, 32, 1, psDBF->fp ));
+    VSIFSeekL( psDBF->fp, 0, 0 );
+    IGUR_sizet(VSIFReadL( abyFileHeader, 32, 1, psDBF->fp ));
 
     abyFileHeader[1] = 95;      /* YY */
     abyFileHeader[2] = 7;     /* MM */
@@ -295,14 +299,14 @@ void  msDBFClose(DBFHandle psDBF)
     abyFileHeader[6] = (psDBF->nRecords/(256*256)) % 256;
     abyFileHeader[7] = (psDBF->nRecords/(256*256*256)) % 256;
 
-    fseek( psDBF->fp, 0, 0 );
-    fwrite( abyFileHeader, 32, 1, psDBF->fp );
+    VSIFSeekL( psDBF->fp, 0, 0 );
+    VSIFWriteL( abyFileHeader, 32, 1, psDBF->fp );
   }
 
   /* -------------------------------------------------------------------- */
   /*      Close, and free resources.                                      */
   /* -------------------------------------------------------------------- */
-  fclose( psDBF->fp );
+  VSIFCloseL( psDBF->fp );
 
   if( psDBF->panFieldOffset != NULL ) {
     free( psDBF->panFieldOffset );
@@ -328,19 +332,22 @@ DBFHandle msDBFCreate( const char * pszFilename )
 
 {
   DBFHandle psDBF;
-  FILE  *fp;
+  VSILFILE  *fp;
 
   /* -------------------------------------------------------------------- */
   /*      Create the file.                                                */
   /* -------------------------------------------------------------------- */
-  fp = fopen( pszFilename, "wb" );
+  fp = VSIFOpenL( pszFilename, "wb" );
   if( fp == NULL )
     return( NULL );
 
-  fputc( 0, fp );
-  fclose( fp );
+  {
+      char ch = 0;
+      VSIFWriteL(&ch, 1, 1, fp);
+  }
+  VSIFCloseL( fp );
 
-  fp = fopen( pszFilename, "rb+" );
+  fp = VSIFOpenL( pszFilename, "rb+" );
   if( fp == NULL )
     return( NULL );
 
@@ -351,7 +358,7 @@ DBFHandle msDBFCreate( const char * pszFilename )
   if (psDBF == NULL) {
     msSetError(MS_MEMERR, "%s: %d: Out of memory allocating %u bytes.\n", "msDBFCreate()",
                __FILE__, __LINE__, (unsigned int)sizeof(DBFInfo));
-    fclose(fp);
+    VSIFCloseL(fp);
     return NULL;
   }
 
@@ -533,8 +540,8 @@ static const char *msDBFReadAttribute(DBFHandle psDBF, int hEntity, int iField )
 
     nRecordOffset = psDBF->nRecordLength * hEntity + psDBF->nHeaderLength;
 
-    safe_fseek( psDBF->fp, nRecordOffset, 0 );
-    if( fread( psDBF->pszCurrentRecord, psDBF->nRecordLength, 1, psDBF->fp ) != 1 )
+    VSIFSeekL( psDBF->fp, nRecordOffset, 0 );
+    if( VSIFReadL( psDBF->pszCurrentRecord, psDBF->nRecordLength, 1, psDBF->fp ) != 1 )
     {
       msSetError(MS_DBFERR, "Cannot read record %d.", "msDBFReadAttribute()",hEntity );
       return( NULL );
@@ -689,7 +696,7 @@ DBFFieldType msDBFGetFieldInfo( DBFHandle psDBF, int iField, char * pszFieldName
 static int msDBFWriteAttribute(DBFHandle psDBF, int hEntity, int iField, void * pValue )
 {
   unsigned int          nRecordOffset;
-  int  i, len;
+  int  len;
   uchar *pabyRec;
   char  szSField[40];
 
@@ -709,7 +716,7 @@ static int msDBFWriteAttribute(DBFHandle psDBF, int hEntity, int iField, void * 
     flushRecord( psDBF );
 
     psDBF->nRecords++;
-    for( i = 0; i < psDBF->nRecordLength; i++ )
+    for( unsigned i = 0; i < psDBF->nRecordLength; i++ )
       psDBF->pszCurrentRecord[i] = ' ';
 
     psDBF->nCurrentRecord = hEntity;
@@ -724,8 +731,8 @@ static int msDBFWriteAttribute(DBFHandle psDBF, int hEntity, int iField, void * 
 
     nRecordOffset = psDBF->nRecordLength * hEntity + psDBF->nHeaderLength;
 
-    safe_fseek( psDBF->fp, nRecordOffset, 0 );
-    if( fread( psDBF->pszCurrentRecord, psDBF->nRecordLength, 1, psDBF->fp ) != 1 )
+    VSIFSeekL( psDBF->fp, nRecordOffset, 0 );
+    if( VSIFReadL( psDBF->pszCurrentRecord, psDBF->nRecordLength, 1, psDBF->fp ) != 1 )
       return MS_FALSE;
 
     psDBF->nCurrentRecord = hEntity;

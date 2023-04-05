@@ -36,14 +36,12 @@
 #include "mapio.h"
 #include "mapows.h"
 
-#if defined(USE_OGR)
-#  include "cpl_conv.h"
-#  include "cpl_vsi.h"
-#endif
+#include "cpl_conv.h"
+#include "cpl_vsi.h"
 
 #define  KML_MAXFEATURES_TODRAW 1000
 
-KmlRenderer::KmlRenderer(int width, int height, outputFormatObj *format, colorObj* color/*=NULL*/)
+KmlRenderer::KmlRenderer(int width, int height, outputFormatObj * /*format*/, colorObj* /*color*/)
   : Width(width), Height(height), MapCellsize(1.0), XmlDoc(NULL), LayerNode(NULL), GroundOverlayNode(NULL),
     PlacemarkNode(NULL), GeomNode(NULL),
     Items(NULL), NumItems(0), FirstLayer(MS_TRUE), map(NULL), currentLayer(NULL),
@@ -129,28 +127,17 @@ int KmlRenderer::saveImage(imageObj *, FILE *fp, outputFormatObj *format)
   xmlChar *buf = NULL;
   msIOContext *context = NULL;
   int chunkSize = 4096;
-#if defined(CPL_ZIP_API_OFFERED)
   int bZip = MS_FALSE;
-#endif
 
   if( msIO_needBinaryStdout() == MS_FAILURE )
     return MS_FAILURE;
 
   xmlDocDumpFormatMemoryEnc(XmlDoc, &buf, &bufSize, "UTF-8", 1);
 
-#if defined(USE_OGR)
   if (format && format->driver && strcasecmp(format->driver, "kmz") == 0) {
-#if defined(CPL_ZIP_API_OFFERED)
     bZip = MS_TRUE;
-#else
-    msSetError( MS_MISCERR, "kmz format support unavailable, perhaps you need to upgrade to GDAL/OGR 1.8?",
-                "KmlRenderer::saveImage()");
-    xmlFree(buf);
-    return MS_FAILURE;
-#endif
   }
 
-#if defined(CPL_ZIP_API_OFFERED)
   if (bZip) {
     VSILFILE *fpZip;
     int bytes_read;
@@ -184,9 +171,6 @@ int KmlRenderer::saveImage(imageObj *, FILE *fp, outputFormatObj *format)
     xmlFree(buf);
     return(MS_SUCCESS);
   }
-#endif
-
-#endif
 
   context = msIO_getHandler(fp);
 
@@ -433,7 +417,7 @@ int KmlRenderer::startNewLayer(imageObj *img, layerObj *layer)
   return MS_SUCCESS;
 }
 
-int KmlRenderer::closeNewLayer(imageObj *img, layerObj *layer)
+int KmlRenderer::closeNewLayer(imageObj *, layerObj *)
 {
   flushPlacemark();
 
@@ -522,8 +506,7 @@ void KmlRenderer::setupRenderingParams(hashTableObj *layerMetadata)
 int KmlRenderer::checkProjection(mapObj *map)
 {
   projectionObj *projection= &map->projection;
-#ifdef USE_PROJ
-  if (projection && projection->numargs > 0 && pj_is_latlong(projection->proj)) {
+  if (projection && projection->numargs > 0 && msProjIsGeographicCRS(projection)) {
     return MS_SUCCESS;
   } else {
     char epsg_string[100];
@@ -549,11 +532,12 @@ int KmlRenderer::checkProjection(mapObj *map)
     }
     strcpy(epsg_string, "epsg:4326" );
     msInitProjection(&out);
+    msProjectionInheritContextFrom(&out, projection);
     msLoadProjectionString(&out, epsg_string);
 
     sRect = map->extent;
     msProjectRect(projection, &out, &sRect);
-    msFreeProjection(projection);
+    msFreeProjectionExceptContext(projection);
     msLoadProjectionString(projection, epsg_string);
 
     /*change also units and extents*/
@@ -566,11 +550,6 @@ int KmlRenderer::checkProjection(mapObj *map)
 
     return MS_SUCCESS;
   }
-
-#else
-  msSetError(MS_MISCERR, "Projection support not enabled", "KmlRenderer::checkProjection" );
-  return MS_FAILURE;
-#endif
 }
 
 xmlNodePtr KmlRenderer::createPlacemarkNode(xmlNodePtr parentNode, char *styleUrl)
@@ -678,11 +657,7 @@ void KmlRenderer::addCoordsNode(xmlNodePtr parentNode, pointObj *pts, int numPts
     if( mElevationFromAttribute ) {
       sprintf(lineBuf, "\t%.8f,%.8f,%.8f\n", pts[i].x, pts[i].y, mCurrentElevationValue);
     } else if (AltitudeMode == relativeToGround || AltitudeMode == absolute) {
-#ifdef USE_POINT_Z_M
       sprintf(lineBuf, "\t%.8f,%.8f,%.8f\n", pts[i].x, pts[i].y, pts[i].z);
-#else
-      msSetError(MS_MISCERR, "Z coordinates support not available  (mapserver not compiled with USE_POINT_Z_M option)", "KmlRenderer::addCoordsNode()");
-#endif
     } else
       sprintf(lineBuf, "\t%.8f,%.8f\n", pts[i].x, pts[i].y);
 
@@ -691,9 +666,10 @@ void KmlRenderer::addCoordsNode(xmlNodePtr parentNode, pointObj *pts, int numPts
   xmlNodeAddContent(coordsNode, BAD_CAST "\t");
 }
 
-void KmlRenderer::renderGlyphs(imageObj *img, pointObj *labelpnt, char *text, double angle, colorObj *clr, colorObj *olcolor, int olwidth)
+void KmlRenderer::renderGlyphs(imageObj *, const textSymbolObj *ts, colorObj *clr, colorObj * /*oc*/, int /*ow*/)
 {
-  xmlNodePtr node;
+  if( ts->annotext == NULL || ts->textpath->numglyphs == 0 )
+    return;
 
   if (PlacemarkNode == NULL)
     PlacemarkNode = createPlacemarkNode(LayerNode, NULL);
@@ -705,12 +681,12 @@ void KmlRenderer::renderGlyphs(imageObj *img, pointObj *labelpnt, char *text, do
   SymbologyFlag[Label] = 1;
 
   /*there is alaws a default name (layer.shapeid). Replace it*/
-  for (node = PlacemarkNode->children; node; node = node->next) {
+  for (xmlNodePtr node = PlacemarkNode->children; node; node = node->next) {
     if (node->type != XML_ELEMENT_NODE)
       continue;
 
     if (strcmp((char *)node->name, "name") == 0) {
-      xmlNodeSetContent(node,  BAD_CAST text);
+      xmlNodeSetContent(node,  BAD_CAST ts->annotext);
       break;
     }
   }
@@ -721,8 +697,8 @@ void KmlRenderer::renderGlyphs(imageObj *img, pointObj *labelpnt, char *text, do
   addAddRenderingSpecifications(geomNode);
 
   pointObj pt;
-  pt.x = labelpnt->x;
-  pt.y = labelpnt->y;
+  pt.x = ts->textpath->glyphs[0].pnt.x;
+  pt.y = ts->textpath->glyphs[0].pnt.y;
   addCoordsNode(geomNode, &pt, 1);
 }
 
@@ -767,9 +743,7 @@ int KmlRenderer::createIconImage(char *fileName, symbolObj *symbol, symbolStyleO
 
   p.x = symbol->sizex * symstyle->scale / 2;
   p.y = symbol->sizey *symstyle->scale / 2;
-#ifdef USE_POINT_Z_M
   p.z = 0.0;
-#endif
 
   status = msDrawMarkerSymbol(map,tmpImg, &p, symstyle->style, 1);
   if( status != MS_SUCCESS )
@@ -1034,8 +1008,8 @@ const char* KmlRenderer::lookupPlacemarkStyle()
       sprintf(lineHexColor,"%02x%02x%02x%02x", LineStyle[i].color->alpha, LineStyle[0].color->blue,
               LineStyle[i].color->green, LineStyle[i].color->red);
 
-      char lineStyleName[32];
-      sprintf(lineStyleName, "_line_%s_w%.1f", lineHexColor, LineStyle[i].width);
+      char lineStyleName[64];
+      snprintf(lineStyleName, sizeof(lineStyleName), "_line_%s_w%.1f", lineHexColor, LineStyle[i].width);
       styleName = msStringConcatenate(styleName, lineStyleName);
     }
   }

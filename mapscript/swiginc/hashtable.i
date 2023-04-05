@@ -1,6 +1,4 @@
 /* ===========================================================================
-   $Id$
-
    Project:  MapServer
    Purpose:  SWIG interface file for mapscript hashTableObj extensions
    Author:   Sean Gillies, sgillies@frii.com
@@ -28,30 +26,9 @@
    ===========================================================================
 */
 
-%{
-#include "../../maphash.h"
-%}
-
-/* ========================================================================
- * Include maphash header, first stating declarations to ignore
- * ======================================================================== */
-
-/* ignore the hashObj struct */
-%ignore hashObj;
-
-/* ignore items and make numitems immutable */
-%ignore items;
-%immutable numitems;
-
-%include "../../maphash.h"
-
-/* ======================================================================== 
- * Extension methods
- * ======================================================================== */
-
 %extend hashTableObj {
     
-    /* New instance */
+    /// Create a new instance
 #if defined(SWIGJAVA) || defined(SWIGCSHARP)
     hashTableObj() {
 #else
@@ -65,15 +42,16 @@
         msFreeHashTable(self);
     }
 
-    /* set a hash item given key and value */
+    /// Set a hash item given key and value. 
+    /// Returns :data:`MS_SUCCESS` or :data:`MS_FAILURE`
     int set(char *key, char *value) {
         if (msInsertHashTable(self, key, value) == NULL) {
-	        return MS_FAILURE;
+            return MS_FAILURE;
         }
         return MS_SUCCESS;
     }
 
-    /* get value from item by its key */
+    /// Returns the value of the item by its key, or default if the key does not exist
     char *get(char *key, char *default_value=NULL) {
         char *value = NULL;
         if (!key) {
@@ -87,23 +65,22 @@
         return value;
     }
 
-    /* Remove one item from hash table */
+    /// Removes the hash item by its key. 
+    /// Returns :data:`MS_SUCCESS` or :data:`MS_FAILURE`
     int remove(char *key) {
         return msRemoveHashTable(self, key);
     }
 
-    /* Clear all items in hash table (to NULL) */
+    /// Empties the table of all items
     void clear(void) {
         msFreeHashItems(self);
         initHashTable(self);
     }
 
-    /* Return the next key or first key if prevkey == NULL */
+    /// Returns the name of the next key or NULL if there is no valid next key.
+    /// If the input key is NULL, returns the first key
     const char *nextKey(char *prevkey=NULL) {
         return msNextKeyFromHashTable(self, (const char *) prevkey);
     }
     
 }
-
-
-

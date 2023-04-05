@@ -30,6 +30,8 @@
 #include "mapserver.h"
 #include "mapows.h"
 
+#include "limits.h"
+
 /* This object is used by the various mapQueryXXXXX() functions. It stores
  * the total amount of shapes and their RAM footprint, when they are cached
  * in the resultCacheObj* of layers. This is the total number accross all queried
@@ -164,8 +166,7 @@ static void initQueryCache(queryCacheObj* queryCache)
  * limits allowed in map->query.max_cached_shape_count and
  * map->query.max_cached_shape_ram_amount.
  */
-static int canCacheShape(mapObj* map, queryCacheObj *queryCache,
-                         shapeObj* shape, int shape_ram_size)
+static int canCacheShape(mapObj* map, queryCacheObj *queryCache, int shape_ram_size)
 {
   if( !map->query.cache_shapes )
       return MS_FALSE;
@@ -205,7 +206,7 @@ static int addResult(mapObj* map, resultCacheObj *cache,
   int i;
   int shape_ram_size = (map->query.max_cached_shape_ram_amount > 0) ? 
                                             msGetShapeRAMSize( shape ) : 0;
-  int store_shape = canCacheShape (map, queryCache, shape, shape_ram_size);
+  int store_shape = canCacheShape (map, queryCache, shape_ram_size);
 
   if(cache->numresults == cache->cachesize) { /* just add it to the end */
     if(cache->cachesize == 0)
@@ -291,7 +292,7 @@ static int loadQueryResults(mapObj *map, FILE *stream)
 {
   int i, j, k, n=0;
 
-  if(1 != fread(&n, sizeof(int), 1, stream)) {
+  if(1 != fread(&n, sizeof(int), 1, stream) || n > INT_MAX - 1) {
     msSetError(MS_MISCERR,"failed to read query count from query file stream", "loadQueryResults()");
     return MS_FAILURE;
   }
@@ -445,8 +446,10 @@ static int loadQueryParams(mapObj *map, FILE *stream)
           map->query.shape->type = shapetype;
 
           if(fscanf(stream, "%d\n", &numlines) != 1) goto parse_error;
+          if( numlines > INT_MAX - 1 ) goto parse_error;
           for(i=0; i<numlines; i++) {
-            if(fscanf(stream, "%d\n", &numpoints) != 1 || numpoints<0) goto parse_error;
+            if(fscanf(stream, "%d\n", &numpoints) != 1 || numpoints<0 ||
+                numpoints > INT_MAX / (int)sizeof(pointObj)) goto parse_error;
 
             line.numpoints = numpoints;
             line.point = (pointObj *) msSmallMalloc(line.numpoints*sizeof(pointObj));
@@ -616,9 +619,9 @@ int msQueryByIndex(mapObj *map)
    * Usually, the row number will be used as resultindex. But when working with
    * databases and querying a single result, the row number is typically 0 and
    * thus useless as the index in the result cache. See #4926 #4076. Only shape
-   * files are considered to have consistent row numbers.
+   * files and flatgeobuf are considered to have consistent row numbers.
    */
-  if ( !(lp->connectiontype == MS_SHAPEFILE || lp->connectiontype == MS_TILED_SHAPEFILE) ) {
+  if ( !(lp->connectiontype == MS_SHAPEFILE || lp->connectiontype == MS_TILED_SHAPEFILE || lp->connectiontype == MS_FLATGEOBUF) ) {
     shape.resultindex = -1;
   }
 
@@ -766,6 +769,8 @@ int msQueryByFilter(mapObj *map)
     start = stop = map->query.layer;
 
   for(l=start; l>=stop; l--) {
+    reprojectionObj* reprojector = NULL;
+
     lp = (GET_LAYER(map, l));
     if (map->query.maxfeatures == 0)
       break; /* nothing else to do */
@@ -804,7 +809,7 @@ int msQueryByFilter(mapObj *map)
     paging = msLayerGetPaging(lp);
     msLayerClose(lp); /* reset */
     status = msLayerOpen(lp);
-    if(status != MS_SUCCESS) goto query_error;
+    if(status != MS_SUCCESS) return MS_FAILURE;
     msLayerEnablePaging(lp, paging);
 
     /* disable driver paging */
@@ -823,7 +828,7 @@ int msQueryByFilter(mapObj *map)
       lp->filter = mergeFilters(&map->query.filter, map->query.filteritem, &old_filter, old_filteritem);      
       if(!lp->filter.string) {
 	msSetError(MS_MISCERR, "Filter merge failed, able to process query.", "msQueryByFilter()");
-        goto query_error;
+        goto restore_old_filter;
       }      
     } else {
       msCopyExpression(&lp->filter, &map->query.filter); /* apply new filter */
@@ -831,7 +836,7 @@ int msQueryByFilter(mapObj *map)
 
     /* build item list, we want *all* items, note this *also* build tokens for the layer filter */
     status = msLayerWhichItems(lp, MS_TRUE, NULL);
-    if(status != MS_SUCCESS) goto query_error;
+    if(status != MS_SUCCESS) goto restore_old_filter;
 
     search_rect = map->query.rect;
 
@@ -844,7 +849,7 @@ int msQueryByFilter(mapObj *map)
       int bUseLayerSRS = MS_FALSE;
       int numFeatures = -1;
 
-#if defined(USE_PROJ) && (defined(USE_WMS_SVR) || defined (USE_WFS_SVR) || defined (USE_WCS_SVR) || defined(USE_SOS_SVR) || defined(USE_WMS_LYR) || defined(USE_WFS_LYR))
+#if defined(USE_WMS_SVR) || defined (USE_WFS_SVR) || defined (USE_WCS_SVR) || defined(USE_SOS_SVR) || defined(USE_WMS_LYR) || defined(USE_WFS_LYR)
       /* Optimization to detect the case where a WFS query uses in fact the */
       /* whole layer extent, but expressed in a map SRS different from the layer SRS */
       /* In the case, we can directly request against the layer extent in its native SRS */
@@ -894,17 +899,18 @@ int msQueryByFilter(mapObj *map)
       // Fallback in case of error (should not happen normally)
     }
 
-#ifdef USE_PROJ
     lp->project = msProjectionsDiffer(&(lp->projection), &(map->projection));
     if(lp->project && memcmp( &search_rect, &invalid_rect, sizeof(search_rect) ) != 0 )
       msProjectRect(&(map->projection), &(lp->projection), &search_rect); /* project the searchrect to source coords */
-#endif
 
     status = msLayerWhichShapes(lp, search_rect, MS_TRUE);
     if(status == MS_DONE) { /* no overlap */
+      lp->filteritem = old_filteritem; /* point back to original value */
+      msCopyExpression(&lp->filter, &old_filter); /* restore old filter */
+      msFreeExpression(&old_filter);
       msLayerClose(lp);
       continue;
-    } else if(status != MS_SUCCESS) goto query_error;
+    } else if(status != MS_SUCCESS) goto restore_old_filter;
 
     lp->resultcache = (resultCacheObj *)malloc(sizeof(resultCacheObj)); /* allocate and initialize the result cache */
     initResultCache( lp->resultcache);
@@ -940,10 +946,17 @@ int msQueryByFilter(mapObj *map)
         continue;
       }
 
-#ifdef USE_PROJ
-      if(lp->project)
-        msProjectShape(&(lp->projection), &(map->projection), &shape);
-#endif
+      if(lp->project) {
+        if( reprojector == NULL ) {
+            reprojector = msProjectCreateReprojector(&(lp->projection), &(map->projection));
+            if( reprojector == NULL ) {
+              msFreeShape(&shape);
+              status = MS_FAILURE;
+              break;
+            }
+        }
+        msProjectShapeEx(reprojector, &shape);
+      }
 
       /* Should we skip this feature? */
       if (!paging && map->query.startindex > 1) {
@@ -976,7 +989,9 @@ int msQueryByFilter(mapObj *map)
     msCopyExpression(&lp->filter, &old_filter); /* restore old filter */
     msFreeExpression(&old_filter);
 
-    if(status != MS_DONE) goto query_error;
+    msProjectDestroyReprojector(reprojector);
+
+    if(status != MS_DONE) return MS_FAILURE;
     if(!map->query.only_cache_result_count && lp->resultcache->numresults == 0) 
       msLayerClose(lp); /* no need to keep the layer open */
   } /* next layer */
@@ -987,15 +1002,16 @@ int msQueryByFilter(mapObj *map)
       return MS_SUCCESS;
   }
 
-  msSetError(MS_NOTFOUND, "No matching record(s) found.", "msQueryByFilter()");
-  return MS_FAILURE;
+  if (map->debug >= MS_DEBUGLEVEL_V) {
+      msDebug("msQueryByFilter(): No matching record(s) found.");
+  }
+  return(MS_SUCCESS);
 
-query_error:
-  // msFree(lp->filteritem);
-  // lp->filteritem = old_filteritem;
-  // msCopyExpression(&lp->filter, &old_filter); /* restore old filter */
-  // msFreeExpression(&old_filter);
-  // msLayerClose(lp);
+restore_old_filter:
+  lp->filteritem = old_filteritem;
+  msCopyExpression(&lp->filter, &old_filter); /* restore old filter */
+  msFreeExpression(&old_filter);
+  msLayerClose(lp);
   return MS_FAILURE;
 }
 
@@ -1034,6 +1050,7 @@ int msQueryByRect(mapObj *map)
     start = stop = map->query.layer;
 
   for(l=start; l>=stop; l--) {
+    reprojectionObj* reprojector = NULL;
     lp = (GET_LAYER(map, l));
     /* Set the global maxfeatures */
     if (map->query.maxfeatures == 0)
@@ -1107,6 +1124,7 @@ int msQueryByRect(mapObj *map)
 
     /* build item list, we want *all* items */
     status = msLayerWhichItems(lp, MS_TRUE, NULL);
+
     if(status != MS_SUCCESS) {
       msFreeShape(&searchshape);
       return(MS_FAILURE);
@@ -1121,7 +1139,7 @@ int msQueryByRect(mapObj *map)
       int bUseLayerSRS = MS_FALSE;
       int numFeatures = -1;
 
-#if defined(USE_PROJ) && (defined(USE_WMS_SVR) || defined (USE_WFS_SVR) || defined (USE_WCS_SVR) || defined(USE_SOS_SVR) || defined(USE_WMS_LYR) || defined(USE_WFS_LYR))
+#if defined(USE_WMS_SVR) || defined (USE_WFS_SVR) || defined (USE_WCS_SVR) || defined(USE_SOS_SVR) || defined(USE_WMS_LYR) || defined(USE_WFS_LYR)
       /* Optimization to detect the case where a WFS query uses in fact the */
       /* whole layer extent, but expressed in a map SRS different from the layer SRS */
       /* In the case, we can directly request against the layer extent in its native SRS */
@@ -1167,12 +1185,10 @@ int msQueryByRect(mapObj *map)
       // Fallback in case of error (should not happen normally)
     }
 
-#ifdef USE_PROJ
     lp->project = msProjectionsDiffer(&(lp->projection), &(map->projection));
     if(lp->project &&
        memcmp( &searchrect, &invalid_rect, sizeof(searchrect) ) != 0 )
       msProjectRect(&(map->projection), &(lp->projection), &searchrect); /* project the searchrect to source coords */
-#endif
 
     status = msLayerWhichShapes(lp, searchrect, MS_TRUE);
     if(status == MS_DONE) { /* no overlap */
@@ -1219,10 +1235,17 @@ int msQueryByRect(mapObj *map)
         continue;
       }
 
-#ifdef USE_PROJ
-      if(lp->project)
-        msProjectShape(&(lp->projection), &(map->projection), &shape);
-#endif
+      if(lp->project) {
+        if( reprojector == NULL ) {
+            reprojector = msProjectCreateReprojector(&(lp->projection), &(map->projection));
+            if( reprojector == NULL ) {
+              msFreeShape(&shape);
+              status = MS_FAILURE;
+              break;
+            }
+        }
+        msProjectShapeEx(reprojector, &shape);
+      }
 
       if(msRectContained(&shape.bounds, &searchrectInMapProj) == MS_TRUE) { /* if the whole shape is in, don't intersect */
         status = MS_TRUE;
@@ -1268,6 +1291,8 @@ int msQueryByRect(mapObj *map)
     if (classgroup)
       msFree(classgroup);
 
+    msProjectDestroyReprojector(reprojector);
+
     if(status != MS_DONE) {
         msFreeShape(&searchshape);
         return(MS_FAILURE);
@@ -1285,8 +1310,10 @@ int msQueryByRect(mapObj *map)
       return(MS_SUCCESS);
   }
 
-  msSetError(MS_NOTFOUND, "No matching record(s) found.", "msQueryByRect()");
-  return(MS_FAILURE);
+  if (map->debug >= MS_DEBUGLEVEL_V) {
+      msDebug("msQueryByRect(): No matching record(s) found.");
+  }
+  return(MS_SUCCESS);
 }
 
 static int is_duplicate(resultCacheObj *resultcache, int shapeindex, int tileindex)
@@ -1348,6 +1375,7 @@ int msQueryByFeatures(mapObj *map)
   msInitShape(&selectshape);
 
   for(l=start; l>=stop; l--) {
+    reprojectionObj* reprojector = NULL;
     if(l == map->query.slayer) continue; /* skip the selection layer */
 
     lp = (GET_LAYER(map, l));
@@ -1424,10 +1452,8 @@ int msQueryByFeatures(mapObj *map)
         return(MS_FAILURE);
       }
 
-#ifdef USE_PROJ
       if(slp->project)
         msProjectShape(&(slp->projection), &(map->projection), &selectshape);
-#endif
 
       /* identify target shapes */
       searchrect = selectshape.bounds;
@@ -1437,10 +1463,8 @@ int msQueryByFeatures(mapObj *map)
       searchrect.miny -= tolerance;
       searchrect.maxy += tolerance;
 
-#ifdef USE_PROJ
       if(lp->project)
         msProjectRect(&(map->projection), &(lp->projection), &searchrect); /* project the searchrect to source coords */
-#endif
 
       status = msLayerWhichShapes(lp, searchrect, MS_TRUE);
       if(status == MS_DONE) { /* no overlap */
@@ -1494,10 +1518,17 @@ int msQueryByFeatures(mapObj *map)
           continue;
         }
 
-#ifdef USE_PROJ
-        if(lp->project)
-          msProjectShape(&(lp->projection), &(map->projection), &shape);
-#endif
+        if(lp->project) {
+            if( reprojector == NULL ) {
+                reprojector = msProjectCreateReprojector(&(lp->projection), &(map->projection));
+                if( reprojector == NULL ) {
+                    msFreeShape(&shape);
+                    status = MS_FAILURE;
+                    break;
+                }
+            }
+            msProjectShapeEx(reprojector, &shape);
+        }
 
         switch(selectshape.type) { /* may eventually support types other than polygon on line */
           case MS_SHAPE_POLYGON:
@@ -1588,12 +1619,15 @@ int msQueryByFeatures(mapObj *map)
       if (classgroup)
         msFree(classgroup);
 
-      if(status != MS_DONE) return(MS_FAILURE);
+      msProjectDestroyReprojector(reprojector);
 
       msFreeShape(&selectshape);
+
+      if(status != MS_DONE) return(MS_FAILURE);
+
     } /* next selection shape */
 
-    if(lp->resultcache->numresults == 0) msLayerClose(lp); /* no need to keep the layer open */
+    if(lp->resultcache == NULL || lp->resultcache->numresults == 0) msLayerClose(lp); /* no need to keep the layer open */
   } /* next layer */
 
   /* was anything found? */
@@ -1602,8 +1636,10 @@ int msQueryByFeatures(mapObj *map)
     if(GET_LAYER(map, l)->resultcache && GET_LAYER(map, l)->resultcache->numresults > 0) return(MS_SUCCESS);
   }
 
-  msSetError(MS_NOTFOUND, "No matching record(s) found.", "msQueryByFeatures()");
-  return(MS_FAILURE);
+  if (map->debug >= MS_DEBUGLEVEL_V) {
+      msDebug("msQueryByFeatures(): No matching record(s) found.");
+  }
+  return(MS_SUCCESS);
 }
 
 /* msQueryByPoint()
@@ -1655,6 +1691,7 @@ int msQueryByPoint(mapObj *map)
     start = stop = map->query.layer;
 
   for(l=start; l>=stop; l--) {
+    reprojectionObj* reprojector = NULL;
     lp = (GET_LAYER(map, l));
     if (map->query.maxfeatures == 0)
       break; /* nothing else to do */
@@ -1734,11 +1771,10 @@ int msQueryByPoint(mapObj *map)
 
     /* identify target shapes */
     searchrect = rect;
-#ifdef USE_PROJ
     lp->project = msProjectionsDiffer(&(lp->projection), &(map->projection));
     if(lp->project)
       msProjectRect(&(map->projection), &(lp->projection), &searchrect); /* project the searchrect to source coords */
-#endif
+
     status = msLayerWhichShapes(lp, searchrect, MS_TRUE);
     if(status == MS_DONE) { /* no overlap */
       msLayerClose(lp);
@@ -1783,10 +1819,17 @@ int msQueryByPoint(mapObj *map)
         continue;
       }
 
-#ifdef USE_PROJ
-      if(lp->project)
-        msProjectShape(&(lp->projection), &(map->projection), &shape);
-#endif
+      if(lp->project) {
+        if( reprojector == NULL ) {
+            reprojector = msProjectCreateReprojector(&(lp->projection), &(map->projection));
+            if( reprojector == NULL ) {
+              msFreeShape(&shape);
+              status = MS_FAILURE;
+              break;
+            }
+        }
+        msProjectShapeEx(reprojector, &shape);
+      }
 
       d = msDistancePointToShape(&(map->query.point), &shape);
       if( d <= t ) { /* found one */
@@ -1825,6 +1868,8 @@ int msQueryByPoint(mapObj *map)
     if (classgroup)
       msFree(classgroup);
 
+    msProjectDestroyReprojector(reprojector);
+
     if(status != MS_DONE) return(MS_FAILURE);
 
     if(lp->resultcache->numresults == 0) msLayerClose(lp); /* no need to keep the layer open */
@@ -1839,8 +1884,10 @@ int msQueryByPoint(mapObj *map)
       return(MS_SUCCESS);
   }
 
-  msSetError(MS_NOTFOUND, "No matching record(s) found.", "msQueryByPoint()");
-  return(MS_FAILURE);
+  if (map->debug >= MS_DEBUGLEVEL_V) {
+      msDebug("msQueryByPoint(): No matching record(s) found.");
+  }
+  return(MS_SUCCESS);
 }
 
 int msQueryByShape(mapObj *map)
@@ -1884,6 +1931,7 @@ int msQueryByShape(mapObj *map)
   msComputeBounds(qshape); /* make sure an accurate extent exists */
 
   for(l=start; l>=stop; l--) { /* each layer */
+    reprojectionObj* reprojector = NULL;
     lp = (GET_LAYER(map, l));
     if (map->query.maxfeatures == 0)
       break; /* nothing else to do */
@@ -1957,11 +2005,9 @@ int msQueryByShape(mapObj *map)
     searchrect.miny -= tolerance;
     searchrect.maxy += tolerance;
 
-#ifdef USE_PROJ
     lp->project = msProjectionsDiffer(&(lp->projection), &(map->projection));
     if(lp->project)
       msProjectRect(&(map->projection), &(lp->projection), &searchrect); /* project the searchrect to source coords */
-#endif
 
     status = msLayerWhichShapes(lp, searchrect, MS_TRUE);
     if(status == MS_DONE) { /* no overlap */
@@ -2006,10 +2052,17 @@ int msQueryByShape(mapObj *map)
         continue;
       }
 
-#ifdef USE_PROJ
-      if(lp->project)
-        msProjectShape(&(lp->projection), &(map->projection), &shape);
-#endif
+      if(lp->project) {
+        if( reprojector == NULL ) {
+            reprojector = msProjectCreateReprojector(&(lp->projection), &(map->projection));
+            if( reprojector == NULL ) {
+              msFreeShape(&shape);
+              status = MS_FAILURE;
+              break;
+            }
+        }
+        msProjectShapeEx(reprojector, &shape);
+      }
 
       switch(qshape->type) { /* may eventually support types other than polygon or line */
         case MS_SHAPE_POLYGON:
@@ -2102,14 +2155,16 @@ int msQueryByShape(mapObj *map)
       }
     } /* next shape */
 
+    free(classgroup);
+    classgroup = NULL;
+
+    msProjectDestroyReprojector(reprojector);
+
     if(status != MS_DONE) {
-      free(classgroup);
       return(MS_FAILURE);
     }
 
     if(lp->resultcache->numresults == 0) msLayerClose(lp); /* no need to keep the layer open */
-    free(classgroup);
-    classgroup = NULL;
   } /* next layer */
 
   /* was anything found? */
@@ -2118,8 +2173,10 @@ int msQueryByShape(mapObj *map)
       return(MS_SUCCESS);
   }
 
-  msSetError(MS_NOTFOUND, "No matching record(s) found.", "msQueryByShape()");
-  return(MS_FAILURE);
+  if (map->debug >= MS_DEBUGLEVEL_V) {
+      msDebug("msQueryByShape(): No matching record(s) found.");
+  }
+  return(MS_SUCCESS);
 }
 
 /* msGetQueryResultBounds()

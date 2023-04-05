@@ -10,7 +10,147 @@ the top of the list.)
 
 For a complete change history, please see the Git log comments.  For more
 details about recent point releases, please see the online changelog at:
-http://mapserver.org/development/changelog/
+https://mapserver.org/development/changelog/
+
+8.0.0 release (2022-09-12)
+--------------------------
+
+RC2 was released as the final 8.0.0 (see major changes below)
+
+8.0.0-rc2 release (2022-09-05)
+------------------------------
+
+- fix !BOX! token not working for a PostGIS connection (#6601)
+
+- check if a LAYER has a NAME, before including it in a GROUP (#6603)
+
+8.0.0-rc1 release (2022-08-19)
+------------------------------
+
+- add missing include to fix build issue on some compilers (#6595)
+
+- update the distributed mapserver-sample.conf (#6598)
+
+8.0.0-beta2 release (2022-08-09)
+--------------------------------
+
+- install coshp utility (#6540)
+
+- improve error messages about missing mandatory metadata (#6542)
+
+- fix reprojection of lines crossing the antimeridian (#6557) 
+
+- config file parsing: use msSetPROJ_LIB() when ENV PROJ_LIB is set (#6565)
+
+- handle PROJ_DATA as well as PROJ_LIB (#6573)
+
+- reset layer filteritem to its old value in case of no overlap (#6550)
+
+8.0.0-beta1 release (2022-06-27)
+--------------------------------
+
+- add new MapServer config file requirement (RFC 135)
+
+- initial OGC API support (RFC 134)
+
+- rename shp2img utility to map2img (RFC 136)
+
+- make STYLES parameter mandatory for WMS GetMap requests (#6012)
+
+- improve SLD label conformance (#6017)
+
+- enable PHP 8 MapScript support, through SWIG, re-enable unit tests, and remove old native PHP MapScript (#6430) 
+
+- remove deprecated mapfile parameters (RFC 133)
+
+- improve numerical validation of mapfile parameter values (#6458)
+
+- fix various security vulnerabilities found by libFuzzer (#6419)
+
+- add new GEOMTRANSFORM 'centerline' labeling method for polygons (#6417)
+
+- upgrade Travis and GitHub CI to run on Ubuntu Focal (#6430)
+
+7.6.4 release (2021-07-12)
+--------------------------
+
+- improved performance of GPKG and SpatiaLite queries (#6361)
+
+- WFS: fix paging with GPKG/Spatialite datasources and non-point geometries (#6325)
+
+- PostGIS: use ST_Intersects instead of && for bounding box (#6348)
+
+see detailed changelog for other fixes
+
+7.6.3 release (2021-04-30)
+--------------------------
+
+- fix security flaw for processing the MAP parameter (#6313)
+
+- fix code defects through Coverity Scan warnings (#6307)
+
+- add support for PROJ 8 (#6249)
+
+see detailed changelog for other fixes
+
+7.6.2 release (2020-12-07)
+--------------------------
+
+- No major changes, see detailed changelog for bug fixes
+
+7.6.1 release (2020-07-31)
+--------------------------
+
+- No major changes, see detailed changelog for bug fixes
+
+7.6.0 release (2020-05-08)
+--------------------------
+
+- for essential WMS client layers set EXCEPTIONS to XML by default (#6066)
+
+7.6.0-rc4 release (2020-05-04)
+------------------------------
+
+- Fix case insensitive 'using unique' for PostGIS connections (#6062)
+
+- Add handling essential WMS layers (#6061)
+
+7.6.0-rc3 release (2020-04-24)
+------------------------------
+
+- Handle special characters in paths on Windows (#5995)
+
+- Add attribute binding for label ALIGN, OFFSET, POSITION (#6052)
+
+7.6.0-rc2 release (2020-04-10)
+------------------------------
+
+- Fix memory corruption in msGEOSGetCentroid (#6041)
+
+7.6.0-rc1 release (2020-04-05)
+------------------------------
+
+- Fix alpha value for hex colors (#6023)
+
+7.6.0-beta2 release (2020-03-28)
+--------------------------------
+
+- fixed build with PHPNG + gnu_source (#6015)
+
+- fixed rendermode with geomtransform (#6021)
+
+7.6.0-beta1 release (2020-03-22)
+--------------------------------
+
+- Full support for PROJ6 API (#5888)
+
+- Enable PointZM data support (X,Y,Z,M coordinates) by default
+
+- SLD support enhancements (RFC 124) except PR#5832
+
+- CONNECTIONOPTIONS support in mapfile LAYER (RFC 125)
+
+- Enforce C99 and C++11 build requirements (RFC 128)
 
 7.4.5 release (2020-4-30)
 -------------------------

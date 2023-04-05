@@ -126,6 +126,7 @@ int msCalculateScale(rectObj extent, int units, int width, int height, int pixel
 
 double msInchesPerUnit(int units, double center_lat)
 {
+  (void)center_lat;
   double lat_adj = 1.0, ipu = 1.0;
 
   switch (units) {
@@ -173,7 +174,7 @@ imageObj *msDrawScalebar(mapObj *map)
   imageObj      *image = NULL;
   double fontWidth, fontHeight;
   outputFormatObj *format = NULL;
-  strokeStyleObj strokeStyle;
+  strokeStyleObj strokeStyle = {0};
   shapeObj shape;
   lineObj line;
   pointObj points[5];
@@ -183,7 +184,7 @@ imageObj *msDrawScalebar(mapObj *map)
   strokeStyle.patternlength=0;
   initTextSymbol(&ts);
 
-  if(map->units == -1) {
+  if((int)map->units == -1) {
     msSetError(MS_MISCERR, "Map units not set.", "msDrawScalebar()");
     return(NULL);
   }
@@ -251,10 +252,7 @@ imageObj *msDrawScalebar(mapObj *map)
   }
 
   /*Ensure we have an image format representing the options for the scalebar.*/
-  msApplyOutputFormat( &format, map->outputformat,
-                       map->scalebar.transparent,
-                       map->scalebar.interlace,
-                       MS_NOOVERRIDE );
+  msApplyOutputFormat( &format, map->outputformat, map->scalebar.transparent);
 
   if(map->scalebar.transparent == MS_OFF) {
     if(!MS_VALID_COLOR(map->scalebar.imagecolor))
@@ -265,17 +263,16 @@ imageObj *msDrawScalebar(mapObj *map)
 
   image = msImageCreate(scalebarWidth, sy, format,
                         map->web.imagepath, map->web.imageurl, map->resolution, map->defresolution, &map->scalebar.imagecolor);
-  image->map = map;
-
-  /* drop this reference to output format */
-  msApplyOutputFormat( &format, NULL,
-                       MS_NOOVERRIDE, MS_NOOVERRIDE, MS_NOOVERRIDE );
 
   /* did we succeed in creating the image? */
   if(!image) {
     msSetError(MS_MISCERR, "Unable to initialize image.", "msDrawScalebar()");
     return NULL;
   }
+  image->map = map;
+
+  /* drop this reference to output format */
+  msApplyOutputFormat( &format, NULL, MS_NOOVERRIDE);
 
   switch(map->scalebar.align) {
     case(MS_ALIGN_LEFT):
@@ -315,14 +312,14 @@ imageObj *msDrawScalebar(mapObj *map)
         else if(MS_VALID_COLOR(map->scalebar.backgroundcolor))
           status = renderer->renderPolygon(image,&shape,&map->scalebar.backgroundcolor);
 
-        if(UNLIKELY(status == MS_FAILURE)) {
+        if(MS_UNLIKELY(status == MS_FAILURE)) {
           goto scale_cleanup;
         }
 
         if(strokeStyle.color) {
           status = renderer->renderLine(image,&shape,&strokeStyle);
 
-          if(UNLIKELY(status == MS_FAILURE)) {
+          if(MS_UNLIKELY(status == MS_FAILURE)) {
             goto scale_cleanup;
           }
         }
@@ -332,7 +329,7 @@ imageObj *msDrawScalebar(mapObj *map)
         p.x = ox + j*isx; /* + MS_NINT(fontPtr->w/2); */
         p.y = oy + scalebarHeight + MS_NINT(VSPACING*fontHeight);
         status = msDrawLabel(map,image,p,msStrdup(label),&map->scalebar.label,resolutionfactor);
-        if(UNLIKELY(status == MS_FAILURE)) {
+        if(MS_UNLIKELY(status == MS_FAILURE)) {
           goto scale_cleanup;
         }
         state = -state;
@@ -344,7 +341,7 @@ imageObj *msDrawScalebar(mapObj *map)
       p.x = ox; /* + MS_NINT(fontPtr->w/2); */
       p.y = oy + scalebarHeight + MS_NINT(VSPACING*fontHeight);
       status = msDrawLabel(map,image,p,msStrdup(label),&map->scalebar.label,resolutionfactor);
-      if(UNLIKELY(status == MS_FAILURE)) {
+      if(MS_UNLIKELY(status == MS_FAILURE)) {
         goto scale_cleanup;
       }
       break;
@@ -363,7 +360,7 @@ imageObj *msDrawScalebar(mapObj *map)
       points[0].x = ox;
       points[1].x = ox + isx*map->scalebar.intervals;
       status = renderer->renderLine(image,&shape,&strokeStyle);
-      if(UNLIKELY(status == MS_FAILURE)) {
+      if(MS_UNLIKELY(status == MS_FAILURE)) {
         goto scale_cleanup;
       }
 
@@ -373,7 +370,7 @@ imageObj *msDrawScalebar(mapObj *map)
       for(j=0; j<=map->scalebar.intervals; j++) {
         points[0].x = points[1].x = ox + j*isx;
         status = renderer->renderLine(image,&shape,&strokeStyle);
-        if(UNLIKELY(status == MS_FAILURE)) {
+        if(MS_UNLIKELY(status == MS_FAILURE)) {
           goto scale_cleanup;
         }
 
@@ -387,7 +384,7 @@ imageObj *msDrawScalebar(mapObj *map)
           p.x = ox + j*isx - MS_NINT((strlen(label)*fontWidth)/2.0);
         }
         status = msDrawLabel(map,image,p,msStrdup(label),&map->scalebar.label,resolutionfactor);
-        if(UNLIKELY(status == MS_FAILURE)) {
+        if(MS_UNLIKELY(status == MS_FAILURE)) {
           goto scale_cleanup;
         }
       }
@@ -400,7 +397,7 @@ imageObj *msDrawScalebar(mapObj *map)
 
 scale_cleanup:
   freeTextSymbol(&ts);
-  if(UNLIKELY(status == MS_FAILURE)) {
+  if(MS_UNLIKELY(status == MS_FAILURE)) {
     msFreeImage(image);
     return NULL;
   }
@@ -544,7 +541,7 @@ int msEmbedScalebar(mapObj *map, imageObj *img)
     if(msMaybeAllocateClassStyle(GET_LAYER(map, l)->class[0], 0)==MS_FAILURE) return MS_FAILURE;
     GET_LAYER(map, l)->class[0]->styles[0]->symbol = s;
     status = msDrawMarkerSymbol(map, img, &point, GET_LAYER(map, l)->class[0]->styles[0], 1.0);
-    if(UNLIKELY(status == MS_FAILURE)) {
+    if(MS_UNLIKELY(status == MS_FAILURE)) {
       goto embed_cleanup;
     }
   } else {
@@ -565,7 +562,7 @@ int msEmbedScalebar(mapObj *map, imageObj *img)
     }
     GET_LAYER(map,l)->class[0]->labels[0]->styles[0]->symbol = s;
     status = msAddLabel(map, img, GET_LAYER(map, l)->class[0]->labels[0], l, 0, NULL, &point, -1, NULL);
-    if(UNLIKELY(status == MS_FAILURE)) {
+    if(MS_UNLIKELY(status == MS_FAILURE)) {
       goto embed_cleanup;
     }
   }
@@ -632,25 +629,21 @@ double GetDeltaExtentsUsingScale(double scale, int units, double centerLat, int 
 double Pix2Georef(int nPixPos, int nPixMin, int nPixMax,
                   double dfGeoMin, double dfGeoMax, int bULisYOrig)
 {
-  double      dfWidthGeo = 0.0;
-  int         nWidthPix = 0;
-  double      dfPixToGeo = 0.0;
   double      dfPosGeo = 0.0;
-  double      dfDeltaGeo = 0.0;
-  int         nDeltaPix = 0;
 
-  dfWidthGeo = dfGeoMax - dfGeoMin;
-  nWidthPix = nPixMax - nPixMin;
+  const double dfWidthGeo = dfGeoMax - dfGeoMin;
+  const int nWidthPix = nPixMax - nPixMin;
 
   if (dfWidthGeo > 0.0 && nWidthPix > 0) {
-    dfPixToGeo = dfWidthGeo / (double)nWidthPix;
+    const double dfPixToGeo = dfWidthGeo / (double)nWidthPix;
 
+    int nDeltaPix;
     if (!bULisYOrig)
       nDeltaPix = nPixPos - nPixMin;
     else
       nDeltaPix = nPixMax - nPixPos;
 
-    dfDeltaGeo = nDeltaPix * dfPixToGeo;
+    const double dfDeltaGeo = nDeltaPix * dfPixToGeo;
 
     dfPosGeo = dfGeoMin + dfDeltaGeo;
   }

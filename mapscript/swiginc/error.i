@@ -1,6 +1,4 @@
 /* ===========================================================================
-   $Id$
- 
    Project:  MapServer
    Purpose:  SWIG interface file for mapscript errorObj extensions
    Author:   Steve Lime 
@@ -30,25 +28,23 @@
 */
 
 
-/* wrap the errorObj and a few functions */
-%include "../../maperror.h"
-
-/* A few things neccessary for automatically wrapped functions */
+/* A few things necessary for automatically wrapped functions */
 %newobject msGetErrorString;
 
-%extend errorObj 
+%extend errorObj
 {
-  
+    /// Create a new instance
     errorObj() 
     {    
         return msGetErrorObj();
     }
 
     ~errorObj() {}
- 
+
+    /// Returns the next error in the stack or NULL if the end has been reached
     errorObj *next() 
     {
-        errorObj *ep;	
+        errorObj *ep;
 
         if (self == NULL || self->next == NULL) return NULL;
 
@@ -62,6 +58,5 @@
     
         return ep->next;
     }
-
 }
 

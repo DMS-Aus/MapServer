@@ -1,7 +1,7 @@
 MapServer
 =========
 
-| |Build Status| |Appveyor Build Status|
+| |Build Status| |Appveyor Build Status| |Coveralls Status| |DOI|
 
 -------
 Summary
@@ -13,22 +13,22 @@ respond to a variety of spatial requests like making maps, scalebars,
 and point, area and feature queries. Virtually all aspects of an 
 application, from web interface to map appearance can be developed 
 without any programming. For the more ambitious user, MapServer 
-applications can be enhanced using Java, JavaScript or many other web 
-technologies. For more  information and complete documentation please 
-visit:
+applications can be enhanced using Python, PHP, Java, JavaScript or 
+many other web technologies. For more  information and complete 
+documentation please visit:
 
-  http://www.mapserver.org/
+  https://mapserver.org/
 
 Bug reports and enhancement submissions can be reported in the MapServer 
 issue tracker at the following url.   If you do make changes and/or enhancements, 
 please let us know so that they might be incorporated into future releases.
 
-  https://github.com/mapserver/mapserver/issues
+  https://github.com/MapServer/MapServer/issues
 
 
 Join the MapServer user mailing list online at:
 
-  http://www.mapserver.org/community/lists.html
+  https://mapserver.org/community/lists.html
 
  
 
@@ -69,7 +69,7 @@ License
 
 ::
 
-  Copyright (c) 2008-2019 Open Source Geospatial Foundation.
+  Copyright (c) 2008-2022 Open Source Geospatial Foundation.
   Copyright (c) 1996-2008 Regents of the University of Minnesota.
 
   Permission is hereby granted, free of charge, to any person obtaining a copy 
@@ -89,10 +89,28 @@ License
   LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, 
   OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE 
   SOFTWARE.
+  
+  FlatGeobuf
+  ----------
+
+  Refer to the FlatGeobuf license found at /flatgeobuf/LICENSE
+  
+  FlatBuffers
+  -----------
+  
+  Refer to the FlatBuffers license found at /flatgeobuf/include/flatbuffers/LICENSE
+  
 
 
-.. |Build Status| image:: https://travis-ci.org/mapserver/mapserver.svg?branch=master
-   :target: https://travis-ci.org/mapserver/mapserver
+.. |Build Status| image:: https://travis-ci.com/MapServer/MapServer.svg?branch=main
+   :target: https://travis-ci.com/MapServer/MapServer
 
 .. |Appveyor Build Status| image:: https://ci.appveyor.com/api/projects/status/vw1n07095a8bg23u?svg=true
    :target: https://ci.appveyor.com/project/mapserver/mapserver
+
+.. |Coveralls Status| image:: https://coveralls.io/repos/github/MapServer/MapServer/badge.svg?branch=main
+   :target: https://coveralls.io/github/MapServer/MapServer?branch=main
+
+.. |DOI| image:: https://zenodo.org/badge/DOI/10.5281/zenodo.5842012.svg
+   :target: https://doi.org/10.5281/zenodo.5842012
+   :alt: Digital Object Identifier (DOI) for MapServer

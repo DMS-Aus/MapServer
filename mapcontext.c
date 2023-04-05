@@ -29,8 +29,10 @@
 #include "mapserver.h"
 #include "mapows.h"
 
+#include "cpl_vsi.h"
 
-#if defined(USE_WMS_LYR) && defined(USE_OGR)
+
+#if defined(USE_WMS_LYR)
 
 /* There is a dependency to GDAL/OGR for the GML driver and MiniXML parser */
 #include "cpl_minixml.h"
@@ -47,12 +49,12 @@
 char * msGetMapContextFileText(char *filename)
 {
   char *pszBuffer;
-  FILE *stream;
+  VSILFILE *stream;
   int  nLength;
 
   /* open file */
   if(filename != NULL && strlen(filename) > 0) {
-    stream = fopen(filename, "rb");
+    stream = VSIFOpenL(filename, "rb");
     if(!stream) {
       msSetError(MS_IOERR, "(%s)", "msGetMapContextFileText()", filename);
       return NULL;
@@ -62,32 +64,32 @@ char * msGetMapContextFileText(char *filename)
     return NULL;
   }
 
-  fseek( stream, 0, SEEK_END );
-  nLength = ftell( stream );
-  fseek( stream, 0, SEEK_SET );
+  VSIFSeekL( stream, 0, SEEK_END );
+  nLength = (int) VSIFTellL( stream );
+  VSIFSeekL( stream, 0, SEEK_SET );
 
   pszBuffer = (char *) malloc(nLength+1);
   if( pszBuffer == NULL ) {
     msSetError(MS_MEMERR, "(%s)", "msGetMapContextFileText()", filename);
-    fclose( stream );
+    VSIFCloseL( stream );
     return NULL;
   }
 
-  if(fread( pszBuffer, nLength, 1, stream ) == 0 &&  !feof(stream)) {
+  if(VSIFReadL( pszBuffer, nLength, 1, stream ) == 0) {
     free( pszBuffer );
-    fclose( stream );
+    VSIFCloseL( stream );
     msSetError(MS_IOERR, "(%s)", "msGetMapContextFileText()", filename);
     return NULL;
   }
   pszBuffer[nLength] = '\0';
 
-  fclose( stream );
+  VSIFCloseL( stream );
 
   return pszBuffer;
 }
 
 
-#if defined(USE_WMS_LYR) && defined(USE_OGR)
+#if defined(USE_WMS_LYR)
 
 /*
 **msGetMapContextXMLHashValue()
@@ -672,7 +674,7 @@ int msLoadMapContextGeneral(mapObj *map, CPLXMLNode *psGeneral,
   /* Projection */
   pszValue = (char*)CPLGetXMLValue(psGeneral,
                                    "BoundingBox.SRS", NULL);
-  if(pszValue != NULL) {
+  if(pszValue != NULL && !EQUAL(pszValue, "(null)")) {
     if(strncasecmp(pszValue, "AUTO:", 5) == 0) {
       pszProj = msStrdup(pszValue);
     } else {
@@ -809,7 +811,6 @@ int msLoadMapContextGeneral(mapObj *map, CPLXMLNode *psGeneral,
 int msLoadMapContextLayer(mapObj *map, CPLXMLNode *psLayer, int nVersion,
                           char *filename, int unique_layer_names)
 {
-  char *pszProj=NULL;
   char *pszValue;
   const char *pszHash;
   char *pszName=NULL;
@@ -835,7 +836,7 @@ int msLoadMapContextLayer(mapObj *map, CPLXMLNode *psLayer, int nVersion,
   /* Status */
   pszValue = (char*)CPLGetXMLValue(psLayer, "hidden", "1");
   if((pszValue != NULL) && (atoi(pszValue) == 0 &&
-                            !strcasecmp(pszValue, "true") == 0))
+                            strcasecmp(pszValue, "true") != 0))
     layer->status = MS_ON;
   else
     layer->status = MS_OFF;
@@ -968,7 +969,7 @@ int msLoadMapContextLayer(mapObj *map, CPLXMLNode *psLayer, int nVersion,
   pszHash = msLookupHashTable(&(layer->metadata), "wms_srs");
   if(((pszHash == NULL) || (strcasecmp(pszHash, "") == 0)) &&
       map->projection.numargs != 0) {
-    pszProj = map->projection.args[map->projection.numargs-1];
+    char* pszProj = map->projection.args[map->projection.numargs-1];
 
     if(pszProj != NULL) {
       if(strncasecmp(pszProj, "AUTO:", 5) == 0) {
@@ -985,6 +986,7 @@ int msLoadMapContextLayer(mapObj *map, CPLXMLNode *psLayer, int nVersion,
                   pszProj);
         }
       }
+      msFree(pszProj);
     }
   }
 
@@ -1066,7 +1068,7 @@ int msLoadMapContextLayer(mapObj *map, CPLXMLNode *psLayer, int nVersion,
 
 int msLoadMapContextURL(mapObj *map, char *urlfilename, int unique_layer_names)
 {
-#if defined(USE_WMS_LYR) && defined(USE_OGR)
+#if defined(USE_WMS_LYR)
   char *pszTmpFile = NULL;
   int status = 0;
 
@@ -1106,7 +1108,7 @@ int msLoadMapContextURL(mapObj *map, char *urlfilename, int unique_layer_names)
 */
 int msLoadMapContext(mapObj *map, char *filename, int unique_layer_names)
 {
-#if defined(USE_WMS_LYR) && defined(USE_OGR)
+#if defined(USE_WMS_LYR)
   char *pszWholeText, *pszValue;
   CPLXMLNode *psRoot, *psMapContext, *psLayer, *psLayerList, *psChild;
   char szPath[MS_MAXPATHLEN];
@@ -1146,9 +1148,6 @@ int msLoadMapContext(mapObj *map, char *filename, int unique_layer_names)
   if( psRoot == NULL ) {
     msSetError( MS_MAPCONTEXTERR, "Invalid XML file (%s)",
                 "msLoadMapContext()", filename );
-    if(psRoot != NULL)
-      CPLDestroyXMLNode(psRoot);
-
     return MS_FAILURE;
   }
 
@@ -1274,8 +1273,8 @@ int msLoadMapContext(mapObj *map, char *filename, int unique_layer_names)
 */
 int msSaveMapContext(mapObj *map, char *filename)
 {
-#if defined(USE_WMS_LYR) && defined(USE_OGR)
-  FILE *stream;
+#if defined(USE_WMS_LYR)
+  VSILFILE *stream;
   char szPath[MS_MAXPATHLEN];
   int nStatus;
 
@@ -1308,11 +1307,11 @@ int msSaveMapContext(mapObj *map, char *filename)
 
 int msWriteMapContext(mapObj *map, FILE *stream)
 {
-#if defined(USE_WMS_LYR) && defined(USE_OGR)
+#if defined(USE_WMS_LYR)
   const char * version;
   char *pszEPSG;
-  char * tabspace=NULL, *pszChar,*pszSLD=NULL,*pszURL,*pszSLD2=NULL;
-  char *pszStyle, *pszStyleItem, *pszSLDBody;
+  char * tabspace=NULL, *pszChar,*pszSLD=NULL,*pszSLD2=NULL;
+  char *pszStyleItem, *pszSLDBody;
   char *pszEncodedVal;
   int i, nValue, nVersion=OWS_VERSION_NOTSET;
   /* Dimension element */
@@ -1650,13 +1649,13 @@ int msWriteMapContext(mapObj *map, FILE *stream)
       /* Format */
       if(msLookupHashTable(&(GET_LAYER(map, i)->metadata),"wms_formatlist")==NULL &&
           msLookupHashTable(&(GET_LAYER(map, i)->metadata),"wms_format")==NULL) {
-        pszURL = NULL;
+        char* pszURL;
         if(GET_LAYER(map, i)->connection)
           pszURL = msStrdup( GET_LAYER(map, i)->connection );
         else
           pszURL = msStrdup( "" );
-        pszValueMod = pszURL;
-        pszValueMod = strstr( pszValueMod, "FORMAT=" );
+
+        pszValueMod = strstr( pszURL, "FORMAT=" );
         if( pszValueMod ) {
           pszValueMod += 7;
           pszChar = strchr(pszValueMod, '&');
@@ -1670,8 +1669,7 @@ int msWriteMapContext(mapObj *map, FILE *stream)
             msFree(pszEncodedVal);
           }
         }
-        if(pszURL)
-          free(pszURL);
+        free(pszURL);
       } else {
         char **papszFormats;
         int numFormats, nForm;
@@ -1712,14 +1710,14 @@ int msWriteMapContext(mapObj *map, FILE *stream)
           pszValue ++;
       if(pszValue == NULL || strlen(pszValue) < 1) {
         /* Check if the style is in the connection URL */
-        pszURL = "";
+        char* pszURL;
         if(GET_LAYER(map, i)->connection)
           pszURL = msStrdup( GET_LAYER(map, i)->connection );
         else
           pszURL = msStrdup( "" );
-        pszValueMod = pszURL;
+
         /* Grab the STYLES in the URL */
-        pszValueMod = strstr( pszValueMod, "STYLES=" );
+        pszValueMod = strstr( pszURL, "STYLES=" );
         if( pszValueMod ) {
           pszValueMod += 7;
           pszChar = strchr(pszValueMod, '&');
@@ -1789,10 +1787,7 @@ int msWriteMapContext(mapObj *map, FILE *stream)
             pszSLD2 = NULL;
           }
         }
-        if(pszURL) {
-          free(pszURL);
-          pszURL = NULL;
-        }
+        free(pszURL);
       } else {
         const char* pszCurrent;
         /* If the style information is not in the connection URL, */
@@ -1804,12 +1799,15 @@ int msWriteMapContext(mapObj *map, FILE *stream)
         msIO_fprintf( stream, "      <StyleList>\n");
         /* Loop in each style in the style list */
         while(pszValue != NULL) {
-          pszStyle = msStrdup(pszValue);
+          char* pszStyle = msStrdup(pszValue);
           pszChar = strchr(pszStyle, ',');
           if(pszChar != NULL)
             pszStyle[pszChar - pszStyle] = '\0';
-          if(strcasecmp(pszStyle, "") == 0)
+          if(pszStyle[0] == '\0')
+          {
+            msFree(pszStyle);
             continue;
+          }
 
           if(pszCurrent && (strcasecmp(pszStyle, pszCurrent) == 0))
             msIO_fprintf( stream,"        <Style current=\"1\">\n" );
@@ -1881,7 +1879,7 @@ int msWriteMapContext(mapObj *map, FILE *stream)
 
           msIO_fprintf( stream,"        </Style>\n" );
 
-          free(pszStyle);
+          msFree(pszStyle);
           pszValue = strchr(pszValue, ',');
           if(pszValue)
             pszValue++;

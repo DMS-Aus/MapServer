@@ -5,17 +5,19 @@ sed -i 's#deb http://us.archive.ubuntu.com/ubuntu/#deb mirror://mirrors.ubuntu.c
 export DEBIAN_FRONTEND=noninteractive
 
 apt-get update
-apt-get install -y python-software-properties
-add-apt-repository -y ppa:ubuntugis/ppa
-add-apt-repository -y ppa:ubuntugis/ubuntugis-testing
+apt-get install -y software-properties-common
+add-apt-repository -y ppa:ubuntugis/ubuntugis-unstable
 apt-get update
 apt-get -y upgrade
 
 # install packages we need
 apt-get install -q -y git build-essential pkg-config cmake libgeos-dev rake \
-    libpq-dev python-all-dev libproj-dev libxml2-dev postgis php5-dev \
-    postgresql-server-dev-9.3 postgresql-9.3-postgis-2.2 vim bison flex swig \
-    librsvg2-dev libpng12-dev libjpeg-dev libgif-dev \
+    libpq-dev python3-dev python3-pip libproj-dev libxml2-dev postgis php-dev \
+    postgresql-server-dev-12 postgresql-12-postgis-3 postgresql-12-postgis-3-scripts vim bison flex swig \
+    librsvg2-dev libpng-dev libjpeg-dev libgif-dev \
     libfreetype6-dev libfcgi-dev libcurl4-gnutls-dev libcairo2-dev \
-    libgdal1-dev libfribidi-dev libexempi-dev \
-    libprotobuf-dev libprotobuf-c0-dev protobuf-c-compiler libharfbuzz-dev gdal-bin
+    libgdal-dev libfribidi-dev libexempi-dev \
+    libprotobuf-dev libprotobuf-c-dev protobuf-c-compiler libharfbuzz-dev gdal-bin \
+    curl sqlite3 libperl-dev python-is-python3
+
+python -m pip install -U -r /vagrant/msautotest/requirements.txt

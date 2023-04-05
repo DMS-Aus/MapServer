@@ -42,10 +42,8 @@ extern int yyparse(parseObj *);
 
 extern parseResultObj yypresult; /* result of parsing, true/false */
 
-#ifdef USE_GDAL
 #include "gdal.h"
 #include "cpl_string.h"
-#endif
 #include "mapraster.h"
 
 #define MAXCOLORS 256
@@ -101,13 +99,14 @@ static int msGetClass_String( layerObj *layer, colorObj *color, const char *pixe
   /* -------------------------------------------------------------------- */
   /*      Loop over classes till we find a match.                         */
   /* -------------------------------------------------------------------- */
-  for(i= (firstClassToTry < 0 ) ? 0 : -1; i<layer->numclasses; i++) {
+  if( firstClassToTry >= layer->numclasses )
+      firstClassToTry = -1;
+  for(i=0; i<layer->numclasses; i++) {
 
-    int idx = i;
-    if( i < 0 )
-        idx = firstClassToTry;
-    else if( i == firstClassToTry )
-        continue;
+    const int idx = firstClassToTry < 0 ? i :
+                    i == 0 ? firstClassToTry :
+                    i <= firstClassToTry ? i - 1:
+                    i;
 
     /* check for correct classgroup, if set */
     if ( layer->class[idx]->group && layer->classgroup &&
@@ -224,8 +223,6 @@ int msGetClass_FloatRGB_WithFirstClassToTry(layerObj *layer, float fValue, int r
 
   return msGetClass_String( layer, &color, pixel_value, firstClassToTry );
 }
-
-#if defined(USE_GDAL)
 
 /************************************************************************/
 /*                      msRasterSetupTileLayer()                        */
@@ -352,7 +349,6 @@ int msDrawRasterSetupTileLayer(mapObj *map, layerObj *layer,
       return MS_FAILURE;
     }
 
-#ifdef USE_PROJ
     /* if necessary, project the searchrect to source coords */
     if((map->projection.numargs > 0) && (layer->projection.numargs > 0) &&
         !EQUAL(layer->projection.args[0], "auto")) {
@@ -370,7 +366,6 @@ int msDrawRasterSetupTileLayer(mapObj *map, layerObj *layer,
         return MS_FAILURE;
       }
     }
-#endif
     return msLayerWhichShapes(tlp, *psearchrect, MS_FALSE);
 }
 
@@ -562,9 +557,6 @@ int msDrawRasterLoadProjection(layerObj *layer,
 
     return MS_SUCCESS;
 }
-#endif // defined(USE_GDAL)
-
-#if defined(USE_GDAL)
 
 typedef enum
 {
@@ -611,7 +603,6 @@ CheckDatasetReturnType msDrawRasterLayerLowCheckDataset(mapObj *map,
 
     return CDRT_OK;
 }
-#endif
 
 /************************************************************************/
 /*              msDrawRasterLayerLowOpenDataset()                       */
@@ -622,19 +613,11 @@ void* msDrawRasterLayerLowOpenDataset(mapObj *map, layerObj *layer,
                                       char szPath[MS_MAXPATHLEN],
                                       char** p_decrypted_path)
 {
-#if !defined(USE_GDAL)
-  msSetError(MS_MISCERR,
-             "Attempt to render a RASTER (or WMS) layer but without\n"
-             "GDAL support enabled.  Raster rendering requires GDAL.",
-             "msDrawRasterLayerLow()" );
-  *p_decrypted_path = NULL;
-  return NULL;
-#else /* defined(USE_GDAL) */
   const char* pszPath;
 
   msGDALInitialize();
 
-  if(layer->debug == MS_TRUE)
+  if(layer->debug)
     msDebug( "msDrawRasterLayerLow(%s): Filename is: %s\n", layer->name, filename);
 
   if( strncmp(filename, "<VRTDataset", strlen("<VRTDataset")) == 0 )
@@ -646,7 +629,7 @@ void* msDrawRasterLayerLowOpenDataset(mapObj *map, layerObj *layer,
     msDrawRasterBuildRasterPath(map, layer, filename, szPath);
     pszPath = szPath;
   }
-  if(layer->debug == MS_TRUE)
+  if(layer->debug)
     msDebug("msDrawRasterLayerLow(%s): Path is: %s\n", layer->name, pszPath);
 
     /*
@@ -661,8 +644,21 @@ void* msDrawRasterLayerLowOpenDataset(mapObj *map, layerObj *layer,
     return NULL;
 
   msAcquireLock( TLOCK_GDAL );
-  return GDALOpenShared( *p_decrypted_path, GA_ReadOnly );
-#endif
+  if( !layer->tileindex )
+  {
+    char** connectionoptions = msGetStringListFromHashTable(&(layer->connectionoptions));
+    GDALDatasetH hDS = GDALOpenEx( *p_decrypted_path,
+                                   GDAL_OF_RASTER | GDAL_OF_SHARED,
+                                   NULL,
+                                   (const char* const*)connectionoptions,
+                                   NULL);
+    CSLDestroy(connectionoptions);
+    return hDS;
+  }
+  else
+  {
+    return GDALOpenShared( *p_decrypted_path, GA_ReadOnly );
+  }
 }
 
 /************************************************************************/
@@ -671,9 +667,6 @@ void* msDrawRasterLayerLowOpenDataset(mapObj *map, layerObj *layer,
 
 void msDrawRasterLayerLowCloseDataset(layerObj *layer, void* hDS)
 {
-#if !defined(USE_GDAL)
-    (void)hDS;
-#else
     if( hDS )
     {
       const char *close_connection;
@@ -683,6 +676,15 @@ void msDrawRasterLayerLowCloseDataset(layerObj *layer, void* hDS)
       if( close_connection == NULL && layer->tileindex == NULL )
         close_connection = "DEFER";
 
+      {
+        /* Due to how GDAL processes OVERVIEW_LEVEL, datasets returned are */
+        /* not shared, despite being asked to, so close them for real */
+        char** connectionoptions = msGetStringListFromHashTable(&(layer->connectionoptions));
+        if( CSLFetchNameValue(connectionoptions, "OVERVIEW_LEVEL") )
+            close_connection = NULL;
+        CSLDestroy(connectionoptions);
+      }
+
       if( close_connection != NULL
           && strcasecmp(close_connection,"DEFER") == 0 ) {
         GDALDereferenceDataset( (GDALDatasetH)hDS );
@@ -691,7 +693,6 @@ void msDrawRasterLayerLowCloseDataset(layerObj *layer, void* hDS)
       }
       msReleaseLock( TLOCK_GDAL );
     }
-#endif
 }
 
 
@@ -703,30 +704,27 @@ void msDrawRasterLayerLowCloseDataset(layerObj *layer, void* hDS)
 
 int msDrawRasterLayerLowCheckIfMustDraw(mapObj *map, layerObj *layer)
 {
-#if !defined(USE_GDAL)
-  return 0;
-#else
-  if(!layer->data && !layer->tileindex && !(layer->connectiontype==MS_KERNELDENSITY)) {
-    if(layer->debug == MS_TRUE)
+  if(!layer->data && !layer->tileindex && !(layer->connectiontype==MS_KERNELDENSITY || layer->connectiontype==MS_IDW)) {
+    if(layer->debug)
       msDebug( "msDrawRasterLayerLow(%s): layer data and tileindex NULL ... doing nothing.", layer->name );
     return(0);
   }
 
   if((layer->status != MS_ON) && (layer->status != MS_DEFAULT)) {
-    if(layer->debug == MS_TRUE)
+    if(layer->debug)
       msDebug( "msDrawRasterLayerLow(%s): not status ON or DEFAULT, doing nothing.", layer->name );
     return(0);
   }
 
   if(map->scaledenom > 0) {
     if((layer->maxscaledenom > 0) && (map->scaledenom > layer->maxscaledenom)) {
-      if(layer->debug == MS_TRUE)
+      if(layer->debug)
         msDebug( "msDrawRasterLayerLow(%s): skipping, map scale %.2g > MAXSCALEDENOM=%g\n",
                  layer->name, map->scaledenom, layer->maxscaledenom );
       return(0);
     }
     if((layer->minscaledenom > 0) && (map->scaledenom <= layer->minscaledenom)) {
-      if(layer->debug == MS_TRUE)
+      if(layer->debug)
         msDebug( "msDrawRasterLayerLow(%s): skipping, map scale %.2g < MINSCALEDENOM=%g\n",
                  layer->name, map->scaledenom, layer->minscaledenom );
       return(0);
@@ -735,13 +733,13 @@ int msDrawRasterLayerLowCheckIfMustDraw(mapObj *map, layerObj *layer)
 
   if(layer->maxscaledenom <= 0 && layer->minscaledenom <= 0) {
     if((layer->maxgeowidth > 0) && ((map->extent.maxx - map->extent.minx) > layer->maxgeowidth)) {
-      if(layer->debug == MS_TRUE)
+      if(layer->debug)
         msDebug( "msDrawRasterLayerLow(%s): skipping, map width %.2g > MAXSCALEDENOM=%g\n", layer->name,
                  (map->extent.maxx - map->extent.minx), layer->maxgeowidth );
       return(0);
     }
     if((layer->mingeowidth > 0) && ((map->extent.maxx - map->extent.minx) < layer->mingeowidth)) {
-      if(layer->debug == MS_TRUE)
+      if(layer->debug)
         msDebug( "msDrawRasterLayerLow(%s): skipping, map width %.2g < MINSCALEDENOM=%g\n", layer->name,
                  (map->extent.maxx - map->extent.minx), layer->mingeowidth );
       return(0);
@@ -749,7 +747,6 @@ int msDrawRasterLayerLowCheckIfMustDraw(mapObj *map, layerObj *layer)
   }
 
   return 1;
-#endif
 }
 
 /************************************************************************/
@@ -772,14 +769,6 @@ int msDrawRasterLayerLowWithDataset(mapObj *map, layerObj *layer, imageObj *imag
   /*      As of MapServer 6.0 GDAL is required for rendering raster       */
   /*      imagery.                                                        */
   /* -------------------------------------------------------------------- */
-#if !defined(USE_GDAL)
-  msSetError(MS_MISCERR,
-             "Attempt to render a RASTER (or WMS) layer but without\n"
-             "GDAL support enabled.  Raster rendering requires GDAL.",
-             "msDrawRasterLayerLow()" );
-  return MS_FAILURE;
-
-#else /* defined(USE_GDAL) */
   int status, done;
   char *filename=NULL, tilename[MS_MAXPATHLEN], tilesrsname[1024];
 
@@ -844,9 +833,9 @@ int msDrawRasterLayerLowWithDataset(mapObj *map, layerObj *layer, imageObj *imag
       done = MS_TRUE; /* only one image so we're done after this */
     }
     
-    if(layer->connectiontype == MS_KERNELDENSITY) {
+    if(layer->connectiontype == MS_KERNELDENSITY || layer->connectiontype == MS_IDW) {
       msAcquireLock( TLOCK_GDAL );
-      status = msComputeKernelDensityDataset(map, image, layer, &hDS, &kernel_density_cleanup_ptr);
+      status = msInterpolationDataset(map, image, layer, &hDS, &kernel_density_cleanup_ptr);
       if(status != MS_SUCCESS) {
         msReleaseLock( TLOCK_GDAL );
         final_status = status;
@@ -916,7 +905,7 @@ int msDrawRasterLayerLowWithDataset(mapObj *map, layerObj *layer, imageObj *imag
     ** the projections differ or if resampling has been explicitly
     ** requested, or if the image has north-down instead of north-up.
     */
-#ifdef USE_PROJ
+
     if( ((adfGeoTransform[2] != 0.0 || adfGeoTransform[4] != 0.0
           || adfGeoTransform[5] > 0.0 || adfGeoTransform[1] < 0.0 )
          && layer->transform )
@@ -924,8 +913,8 @@ int msDrawRasterLayerLowWithDataset(mapObj *map, layerObj *layer, imageObj *imag
                                 &(layer->projection) )
         || CSLFetchNameValue( layer->processing, "RESAMPLE" ) != NULL ) {
       status = msResampleGDALToMap( map, layer, image, rb, hDS );
-    } else
-#endif
+    }
+    else
     {
       if( adfGeoTransform[2] != 0.0 || adfGeoTransform[4] != 0.0 ) {
         if( layer->debug || map->debug )
@@ -954,7 +943,7 @@ int msDrawRasterLayerLowWithDataset(mapObj *map, layerObj *layer, imageObj *imag
     ** default to keeping open for single data files, and
     ** to closing for tile indexes
     */
-    if(layer->connectiontype == MS_KERNELDENSITY) {
+    if(layer->connectiontype == MS_KERNELDENSITY || layer->connectiontype == MS_IDW) {
       /*
       ** Fix issue #5330
       ** The in-memory kernel density heatmap gdal dataset handle (hDS) gets re-used
@@ -978,13 +967,11 @@ cleanup:
   if(layer->tileindex) { /* tiling clean-up */
     msDrawRasterCleanupTileLayer(tlp, tilelayerindex);
   }
-  if(layer->connectiontype == MS_KERNELDENSITY && kernel_density_cleanup_ptr) {
-    msCleanupKernelDensityDataset(map, image, layer, kernel_density_cleanup_ptr);
+  if(kernel_density_cleanup_ptr) {
+    msCleanupInterpolationDataset(map, image, layer, kernel_density_cleanup_ptr);
   }
 
   return final_status;
-
-#endif /* defined(USE_GDAL) */
 }
 
 /************************************************************************/
@@ -998,27 +985,37 @@ imageObj *msDrawReferenceMap(mapObj *map)
   char szPath[MS_MAXPATHLEN];
   int status = MS_SUCCESS;
 
-  imageObj   *image = NULL;
+  imageObj *image = NULL;
   styleObj style;
 
+  /* check to see if we have enough information to actually proceed */
+  if(!map->reference.image || map->reference.height == 0 || map->reference.width == 0) {
+    msSetError(MS_MISCERR, "Reference map configuration error.", "msDrawReferenceMap()");
+    return NULL;
+  }
 
   rendererVTableObj *renderer = MS_MAP_RENDERER(map);
   rasterBufferObj *refImage = (rasterBufferObj*)calloc(1,sizeof(rasterBufferObj));
   MS_CHECK_ALLOC(refImage, sizeof(rasterBufferObj), NULL);
 
   if(MS_SUCCESS != renderer->loadImageFromFile(msBuildPath(szPath, map->mappath, map->reference.image),refImage)) {
-    msSetError(MS_MISCERR,"error loading reference image %s","msDrawREferenceMap()",szPath);
+    msSetError(MS_MISCERR,"Error loading reference image %s.","msDrawReferenceMap()",szPath);
+    free(refImage);
     return NULL;
   }
 
   image = msImageCreate(refImage->width, refImage->height, map->outputformat,
                         map->web.imagepath, map->web.imageurl, map->resolution, map->defresolution, &(map->reference.color));
-  if(!image) return NULL;
+  if(!image)
+  {
+      free(refImage);
+      return NULL;
+  }
 
   status = renderer->mergeRasterBuffer(image,refImage,1.0,0,0,0,0,refImage->width, refImage->height);
   msFreeRasterBuffer(refImage);
   free(refImage);
-  if(UNLIKELY(status == MS_FAILURE))
+  if(MS_UNLIKELY(status == MS_FAILURE))
     return NULL;
 
   /* make sure the extent given in mapfile fits the image */
@@ -1066,7 +1063,7 @@ imageObj *msDrawReferenceMap(mapObj *map)
     if( map->reference.maxboxsize == 0 ||
         ((abs(x2 - x1) < map->reference.maxboxsize) &&
          (abs(y2 - y1) < map->reference.maxboxsize)) ) {
-      if(UNLIKELY(MS_FAILURE == msDrawShadeSymbol(map, image, &rect, &style, 1.0))) {
+      if(MS_UNLIKELY(MS_FAILURE == msDrawShadeSymbol(map, image, &rect, &style, 1.0))) {
         msFreeImage(image);
         return NULL;
       }
@@ -1090,7 +1087,7 @@ imageObj *msDrawReferenceMap(mapObj *map)
           style.symbol = msGetSymbolIndex(&map->symbolset,  map->reference.markername, MS_TRUE);
         }
 
-        if(UNLIKELY(MS_FAILURE == msDrawMarkerSymbol(map, image, &point, &style, 1.0))) {
+        if(MS_UNLIKELY(MS_FAILURE == msDrawMarkerSymbol(map, image, &point, &style, 1.0))) {
           msFreeImage(image);
           return NULL;
         }
@@ -1129,7 +1126,7 @@ imageObj *msDrawReferenceMap(mapObj *map)
         cross.line[3].point[1].x = x21+8;
         cross.line[3].point[1].y = y21;
 
-        if(UNLIKELY(MS_FAILURE == msDrawLineSymbol(map,image,&cross,&style,1.0))) {
+        if(MS_UNLIKELY(MS_FAILURE == msDrawLineSymbol(map,image,&cross,&style,1.0))) {
           msFreeImage(image);
           return NULL;
         }

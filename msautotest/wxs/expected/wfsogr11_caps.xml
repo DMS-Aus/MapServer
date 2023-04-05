@@ -91,7 +91,7 @@ Content-Type: text/xml; charset=UTF-8
         <ows:Value>text/csv; streamed</ows:Value>
         <ows:Value>text/xml; subtype=gml/2.1.2; driver=ogr</ows:Value>
         <ows:Value>application/gpx+xml; streamed</ows:Value>
-        <ows:Value>application/zip; driver=ogr/bna</ows:Value>
+        <ows:Value>application/zip; driver=ogr/csv</ows:Value>
         <ows:Value>application/shapefile</ows:Value>
         <ows:Value>MIDMIF</ows:Value>
         <ows:Value>MultiMIDMIF</ows:Value>
@@ -113,14 +113,14 @@ Content-Type: text/xml; charset=UTF-8
         <Format>text/csv; streamed</Format>
         <Format>text/xml; subtype=gml/2.1.2; driver=ogr</Format>
         <Format>application/gpx+xml; streamed</Format>
-        <Format>application/zip; driver=ogr/bna</Format>
+        <Format>application/zip; driver=ogr/csv</Format>
         <Format>application/shapefile</Format>
         <Format>MIDMIF</Format>
         <Format>MultiMIDMIF</Format>
       </OutputFormats>
       <ows:WGS84BoundingBox dimensions="2">
-        <ows:LowerCorner>-66.633317770969 42.382053788395</ows:LowerCorner>
-        <ows:UpperCorner>-59.292113839180 48.295511938680</ows:UpperCorner>
+        <ows:LowerCorner>-66.633318 42.382054</ows:LowerCorner>
+        <ows:UpperCorner>-59.292114 48.295512</ows:UpperCorner>
       </ows:WGS84BoundingBox>
       <MetadataURL format="text/xml" type="TC211">http://localhost/path/to/wfs_simple?request=GetMetadata&amp;layer=road</MetadataURL>
     </FeatureType>
@@ -138,8 +138,8 @@ Content-Type: text/xml; charset=UTF-8
         <Format>application/json; subtype=geojson</Format>
       </OutputFormats>
       <ows:WGS84BoundingBox dimensions="2">
-        <ows:LowerCorner>-66.328616887533 42.5631251681</ows:LowerCorner>
-        <ows:UpperCorner>-59.688212172925 47.941250727064</ows:UpperCorner>
+        <ows:LowerCorner>-66.328617 42.563125</ows:LowerCorner>
+        <ows:UpperCorner>-59.688212 47.941251</ows:UpperCorner>
       </ows:WGS84BoundingBox>
       <MetadataURL format="text/xml" type="TC211">http://localhost/path/to/wfs_simple?request=GetMetadata&amp;layer=popplace</MetadataURL>
     </FeatureType>
@@ -153,14 +153,14 @@ Content-Type: text/xml; charset=UTF-8
         <Format>text/csv; streamed</Format>
         <Format>text/xml; subtype=gml/2.1.2; driver=ogr</Format>
         <Format>application/gpx+xml; streamed</Format>
-        <Format>application/zip; driver=ogr/bna</Format>
+        <Format>application/zip; driver=ogr/csv</Format>
         <Format>application/shapefile</Format>
         <Format>MIDMIF</Format>
         <Format>MultiMIDMIF</Format>
       </OutputFormats>
       <ows:WGS84BoundingBox dimensions="2">
-        <ows:LowerCorner>-66.633317770969 42.382053788395</ows:LowerCorner>
-        <ows:UpperCorner>-59.292113839180 48.295511938680</ows:UpperCorner>
+        <ows:LowerCorner>-66.633318 42.382054</ows:LowerCorner>
+        <ows:UpperCorner>-59.292114 48.295512</ows:UpperCorner>
       </ows:WGS84BoundingBox>
       <MetadataURL format="text/xml" type="TC211">http://localhost/path/to/wfs_simple?request=GetMetadata&amp;layer=road_with_addfiles</MetadataURL>
     </FeatureType>
@@ -174,14 +174,14 @@ Content-Type: text/xml; charset=UTF-8
         <Format>text/csv; streamed</Format>
         <Format>text/xml; subtype=gml/2.1.2; driver=ogr</Format>
         <Format>application/gpx+xml; streamed</Format>
-        <Format>application/zip; driver=ogr/bna</Format>
+        <Format>application/zip; driver=ogr/csv</Format>
         <Format>application/shapefile</Format>
         <Format>MIDMIF</Format>
         <Format>MultiMIDMIF</Format>
       </OutputFormats>
       <ows:WGS84BoundingBox dimensions="2">
-        <ows:LowerCorner>-66.633317770969 42.382053788395</ows:LowerCorner>
-        <ows:UpperCorner>-59.292113839180 48.295511938680</ows:UpperCorner>
+        <ows:LowerCorner>-66.633318 42.382054</ows:LowerCorner>
+        <ows:UpperCorner>-59.292114 48.295512</ows:UpperCorner>
       </ows:WGS84BoundingBox>
       <MetadataURL format="text/xml" type="TC211">http://localhost/path/to/wfs_simple?request=GetMetadata&amp;layer=road2_with_addfiles</MetadataURL>
     </FeatureType>
@@ -197,8 +197,8 @@ Content-Type: text/xml; charset=UTF-8
         <Format>MIDMIF</Format>
       </OutputFormats>
       <ows:WGS84BoundingBox dimensions="2">
-        <ows:LowerCorner>-7.5572625062256 49.76680723189</ows:LowerCorner>
-        <ows:UpperCorner>-7.5557777787773 49.767768904154</ows:UpperCorner>
+        <ows:LowerCorner>-7.556551 49.766186</ows:LowerCorner>
+        <ows:UpperCorner>-7.555066 49.767148</ows:UpperCorner>
       </ows:WGS84BoundingBox>
       <MetadataURL format="text/xml" type="TC211">http://localhost/path/to/wfs_simple?request=GetMetadata&amp;layer=multi</MetadataURL>
     </FeatureType>
@@ -215,8 +215,8 @@ Content-Type: text/xml; charset=UTF-8
         <Format>application/json; subtype=geojson</Format>
       </OutputFormats>
       <ows:WGS84BoundingBox dimensions="2">
-        <ows:LowerCorner>-7.5570524339304 49.767082436309</ows:LowerCorner>
-        <ows:UpperCorner>-7.5570524339304 49.767082436309</ows:UpperCorner>
+        <ows:LowerCorner>-7.556341 49.766461</ows:LowerCorner>
+        <ows:UpperCorner>-7.556341 49.766461</ows:UpperCorner>
       </ows:WGS84BoundingBox>
       <MetadataURL format="text/xml" type="TC211">http://localhost/path/to/wfs_simple?request=GetMetadata&amp;layer=withnullvalues</MetadataURL>
     </FeatureType>

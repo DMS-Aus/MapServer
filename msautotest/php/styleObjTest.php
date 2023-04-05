@@ -1,10 +1,10 @@
 <?php
 
-class StyleObjTest extends PHPUnit_Framework_TestCase
+class styleObjTest extends \PHPUnit\Framework\TestCase
 {
     protected $style;
 
-    public function setUp()
+    public function setUp(): void
     {
         $map_file = 'maps/labels.map';
         $map = new mapObj($map_file);
@@ -28,8 +28,13 @@ class StyleObjTest extends PHPUnit_Framework_TestCase
 
     public function testsClone()
     {
-        $newStyle = clone $this->style;
+        $newStyle = $this->style->cloneStyle();
     }
+    
+    # destroy variables, if not can lead to segmentation fault
+    public function tearDown(): void {
+        unset($style, $map_file, $map, $this->style, $this->style->initialgap, $this->style->maxscaledenom, $this->style->minscaledenom);
+    }    
 
 }
 

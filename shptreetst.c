@@ -33,7 +33,7 @@
 #include <unistd.h>
 #endif
 #include <stdlib.h>
-
+#include <limits.h>
 
 
 #ifdef SHPT_POLYGON
@@ -55,7 +55,7 @@ char* AddFileSuffix ( const char * Filename, const char * Suffix )
   /* -------------------------------------------------------------------- */
   pszBasename = (char *) msSmallMalloc(strlen(Filename)+5);
   strcpy( pszBasename, Filename );
-  for( i = strlen(pszBasename)-1;
+  for( i = (int)strlen(pszBasename)-1;
        i > 0 && pszBasename[i] != '.' && pszBasename[i] != '/'
        && pszBasename[i] != '\\';
        i-- ) {}
@@ -148,6 +148,11 @@ int main( int argc, char ** argv )
     rect.maxx = atof (argv[4]);
     rect.maxy = atof (argv[5]);
   } else {
+    if( node == NULL )
+    {
+        printf("node == NULL");
+        return 1;
+    }
     printf ("using last read box as a search \n");
     rect.minx =  node->rect.minx;
     rect.miny =  node->rect.miny;
@@ -157,7 +162,8 @@ int main( int argc, char ** argv )
 
   bitmap = msSearchDiskTree( argv[1], rect, 0 /* no debug*/, j );
 
-  if ( bitmap ) {
+  /* j < INT_MAX - 1 test just to please Coverity untrusted bound loop warning */
+  if ( bitmap && j < INT_MAX - 1 ) {
     printf ("result of rectangle search was \n");
     for ( i=0; i<j; i++) {
       if ( msGetBit(bitmap,i) ) {

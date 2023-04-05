@@ -5,7 +5,7 @@ Content-Type: text/xml; charset=UTF-8
 
 <Service>
   <Name>WMS</Name>
-<!-- WARNING: Mandatory metadata '..._title' was missing in this context. -->
+<!-- WARNING: Mandatory metadata "wms_title" or "ows_title" was missing in this context. -->
   <Title>wms_dimesion</Title>
   <OnlineResource xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="http://localhost/path/to/mswms?"/>
   <ContactInformation>
@@ -36,6 +36,7 @@ Content-Type: text/xml; charset=UTF-8
       <Format>image/tiff</Format>
       <Format>application/vnd.google-earth.kml+xml</Format>
       <Format>application/vnd.google-earth.kmz</Format>
+      <Format>application/vnd.mapbox-vector-tile</Format>
       <Format>application/x-protobuf</Format>
       <Format>application/json</Format>
       <DCPType>
@@ -95,30 +96,30 @@ Content-Type: text/xml; charset=UTF-8
   <sld:UserDefinedSymbolization SupportSLD="1" UserLayer="0" UserStyle="1" RemoteWFS="0" InlineFeature="0" RemoteWCS="0"/>
   <Layer>
     <Name>wms_dimesion</Name>
-<!-- WARNING: Mandatory metadata '..._title' was missing in this context. -->
+<!-- WARNING: Mandatory metadata "wms_title" or "ows_title" was missing in this context. -->
     <Title>wms_dimesion</Title>
     <Abstract>wms_dimesion</Abstract>
     <CRS>EPSG:4326</CRS>
     <EX_GeographicBoundingBox>
-        <westBoundLongitude>0.00017</westBoundLongitude>
-        <eastBoundLongitude>0.00342</eastBoundLongitude>
-        <southBoundLatitude>-0.00213</southBoundLatitude>
-        <northBoundLatitude>0.00031</northBoundLatitude>
+        <westBoundLongitude>0.000178</westBoundLongitude>
+        <eastBoundLongitude>0.003420</eastBoundLongitude>
+        <southBoundLatitude>-0.002134</southBoundLatitude>
+        <northBoundLatitude>0.000314</northBoundLatitude>
     </EX_GeographicBoundingBox>
     <BoundingBox CRS="EPSG:4326"
-                minx="-0.00213" miny="0.00017" maxx="0.00031" maxy="0.00342" />
+                minx="-0.002134" miny="0.000178" maxx="0.000314" maxy="0.003420" />
     <Layer queryable="0" opaque="0" cascaded="0">
         <Name>lakes_elev</Name>
         <Title>Lakes</Title>
         <CRS>EPSG:4326</CRS>
         <EX_GeographicBoundingBox>
-            <westBoundLongitude>0.00017826</westBoundLongitude>
+            <westBoundLongitude>0.000178</westBoundLongitude>
             <eastBoundLongitude>0.003420</eastBoundLongitude>
-            <southBoundLatitude>-0.00213</southBoundLatitude>
-            <northBoundLatitude>0.00031377</northBoundLatitude>
+            <southBoundLatitude>-0.002134</southBoundLatitude>
+            <northBoundLatitude>0.000314</northBoundLatitude>
         </EX_GeographicBoundingBox>
         <BoundingBox CRS="EPSG:4326"
-                    minx="-0.00213" miny="0.00017826" maxx="0.00031377" maxy="0.003420" />
+                    minx="-0.002134" miny="0.000178" maxx="0.000314" maxy="0.003420" />
         <Dimension name="elevation" units="meters" default="500" multipleValues="1" nearestValue="0">500, 490, 480</Dimension>
         <Dimension name="text_dimension" units="my_units"  multipleValues="1"  nearestValue="0">first, second, third</Dimension>
         <MetadataURL type="TC211">
@@ -139,13 +140,13 @@ Content-Type: text/xml; charset=UTF-8
         <Title>Lakes</Title>
         <CRS>EPSG:4326</CRS>
         <EX_GeographicBoundingBox>
-            <westBoundLongitude>0.00017826</westBoundLongitude>
+            <westBoundLongitude>0.000178</westBoundLongitude>
             <eastBoundLongitude>0.003420</eastBoundLongitude>
-            <southBoundLatitude>-0.00213</southBoundLatitude>
-            <northBoundLatitude>0.00031377</northBoundLatitude>
+            <southBoundLatitude>-0.002134</southBoundLatitude>
+            <northBoundLatitude>0.000314</northBoundLatitude>
         </EX_GeographicBoundingBox>
         <BoundingBox CRS="EPSG:4326"
-                    minx="-0.00213" miny="0.00017826" maxx="0.00031377" maxy="0.003420" />
+                    minx="-0.002134" miny="0.000178" maxx="0.000314" maxy="0.003420" />
         <Dimension name="elevation" units="meters"  multipleValues="1"  nearestValue="0">490/800</Dimension>
         <MetadataURL type="TC211">
           <Format>text/xml</Format>
@@ -165,13 +166,13 @@ Content-Type: text/xml; charset=UTF-8
         <Title>Lakes</Title>
         <CRS>EPSG:4326</CRS>
         <EX_GeographicBoundingBox>
-            <westBoundLongitude>0.00017826</westBoundLongitude>
+            <westBoundLongitude>0.000178</westBoundLongitude>
             <eastBoundLongitude>0.003420</eastBoundLongitude>
-            <southBoundLatitude>-0.00213</southBoundLatitude>
-            <northBoundLatitude>0.00031377</northBoundLatitude>
+            <southBoundLatitude>-0.002134</southBoundLatitude>
+            <northBoundLatitude>0.000314</northBoundLatitude>
         </EX_GeographicBoundingBox>
         <BoundingBox CRS="EPSG:4326"
-                    minx="-0.00213" miny="0.00017826" maxx="0.00031377" maxy="0.003420" />
+                    minx="-0.002134" miny="0.000178" maxx="0.000314" maxy="0.003420" />
         <Dimension name="elevation" units="meters"  multipleValues="1"  nearestValue="0">480/500,800/900</Dimension>
         <MetadataURL type="TC211">
           <Format>text/xml</Format>

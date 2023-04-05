@@ -1,6 +1,4 @@
 /* ===========================================================================
-   $Id$
-   
    Project:  MapServer
    Purpose:  SWIG interface file for connection pool management
    Author:   Umberto Nicoletti, unicoletti@prometeo.it
@@ -28,4 +26,6 @@
    ===========================================================================
 */
 
+/// Some memory leaks can be avoided by closing any unreferenced 
+/// connections from time to time. See https://github.com/mapserver/mapserver/issues/1661
 void msConnPoolCloseUnreferenced();

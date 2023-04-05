@@ -30,8 +30,6 @@
 #ifndef MAPGDAL_H
 #define MAPGDAL_H
 
-#ifdef USE_GDAL
-
 #include "mapserver.h"
 #include "gdal.h"
 
@@ -44,7 +42,5 @@ int msGDALDriverSupportsVirtualIOOutput( GDALDriverH hDriver );
 #ifdef __cplusplus
 }
 #endif
-
-#endif /* USE_GDAL */
 
 #endif /* MAPGDAL_H */

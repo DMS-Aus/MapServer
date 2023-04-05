@@ -45,20 +45,24 @@ typedef struct _streamInfo {
   bufferObj *buffer;
 } streamInfo;
 
+static
 void png_write_data_to_stream(png_structp png_ptr, png_bytep data, png_size_t length)
 {
   FILE *fp = ((streamInfo*)png_get_io_ptr(png_ptr))->fp;
   msIO_fwrite(data,length,1,fp);
 }
 
+static
 void png_write_data_to_buffer(png_structp png_ptr, png_bytep data, png_size_t length)
 {
   bufferObj *buffer = ((streamInfo*)png_get_io_ptr(png_ptr))->buffer;
   msBufferAppend(buffer,data,length);
 }
 
+static
 void png_flush_data(png_structp png_ptr)
 {
+  (void)png_ptr;
   /* do nothing */
 }
 
@@ -79,7 +83,7 @@ typedef struct {
 
 #define OUTPUT_BUF_SIZE 4096
 
-void
+static void
 jpeg_init_destination (j_compress_ptr cinfo)
 {
   ms_destination_mgr *dest = (ms_destination_mgr*) cinfo->dest;
@@ -93,6 +97,7 @@ jpeg_init_destination (j_compress_ptr cinfo)
   dest->pub.free_in_buffer = OUTPUT_BUF_SIZE;
 }
 
+static
 void jpeg_stream_term_destination (j_compress_ptr cinfo)
 {
   ms_stream_destination_mgr *dest = (ms_stream_destination_mgr*) cinfo->dest;
@@ -101,6 +106,7 @@ void jpeg_stream_term_destination (j_compress_ptr cinfo)
   dest->mgr.pub.free_in_buffer = OUTPUT_BUF_SIZE;
 }
 
+static
 void jpeg_buffer_term_destination (j_compress_ptr cinfo)
 {
   ms_buffer_destination_mgr *dest = (ms_buffer_destination_mgr*) cinfo->dest;
@@ -109,7 +115,8 @@ void jpeg_buffer_term_destination (j_compress_ptr cinfo)
   dest->mgr.pub.free_in_buffer = OUTPUT_BUF_SIZE;
 }
 
-int jpeg_stream_empty_output_buffer (j_compress_ptr cinfo)
+static
+boolean jpeg_stream_empty_output_buffer (j_compress_ptr cinfo)
 {
   ms_stream_destination_mgr *dest = (ms_stream_destination_mgr*) cinfo->dest;
   msIO_fwrite(dest->mgr.data, OUTPUT_BUF_SIZE, 1, dest->stream);
@@ -118,7 +125,8 @@ int jpeg_stream_empty_output_buffer (j_compress_ptr cinfo)
   return TRUE;
 }
 
-int jpeg_buffer_empty_output_buffer (j_compress_ptr cinfo)
+static
+boolean jpeg_buffer_empty_output_buffer (j_compress_ptr cinfo)
 {
   ms_buffer_destination_mgr *dest = (ms_buffer_destination_mgr*) cinfo->dest;
   msBufferAppend(dest->buffer, dest->mgr.data, OUTPUT_BUF_SIZE);
@@ -224,12 +232,11 @@ int saveAsJPEG(mapObj *map, rasterBufferObj *rb, streamInfo *info,
 
   for(row=0; row<rb->height; row++) {
     JSAMPLE *pixptr = rowdata;
-    int col;
     unsigned char *r,*g,*b;
     r=rb->data.rgba.r+row*rb->data.rgba.row_step;
     g=rb->data.rgba.g+row*rb->data.rgba.row_step;
     b=rb->data.rgba.b+row*rb->data.rgba.row_step;
-    for(col=0; col<rb->width; col++) {
+    for(unsigned col=0; col<rb->width; col++) {
       *(pixptr++) = *r;
       *(pixptr++) = *g;
       *(pixptr++) = *b;
@@ -253,7 +260,8 @@ int saveAsJPEG(mapObj *map, rasterBufferObj *rb, streamInfo *info,
  */
 int remapPaletteForPNG(rasterBufferObj *rb, rgbPixel *rgb, unsigned char *a, int *num_a)
 {
-  int bot_idx, top_idx, x;
+  int bot_idx, top_idx;
+  unsigned x;
   int remap[256];
   unsigned int maxval = rb->data.palette.scaling_maxval;
 
@@ -267,7 +275,7 @@ int remapPaletteForPNG(rasterBufferObj *rb, rgbPixel *rgb, unsigned char *a, int
   ** --not that this should matter to anyone.
   */
 
-  for (top_idx = rb->data.palette.num_entries-1, bot_idx = x = 0;  x < rb->data.palette.num_entries;  ++x) {
+  for (top_idx = (int)rb->data.palette.num_entries-1, bot_idx = x = 0;  x < rb->data.palette.num_entries;  ++x) {
     if (rb->data.palette.palette[x].a == maxval)
       remap[x] = top_idx--;
     else
@@ -316,7 +324,7 @@ int savePalettePNG(rasterBufferObj *rb, streamInfo *info, int compression)
   rgbPixel rgb[256];
   unsigned char a[256];
   int num_a;
-  int row,sample_depth;
+  int sample_depth;
   png_structp png_ptr = png_create_write_struct(
                           PNG_LIBPNG_VER_STRING, NULL,NULL,NULL);
 
@@ -368,7 +376,7 @@ int savePalettePNG(rasterBufferObj *rb, streamInfo *info, int compression)
   png_write_info(png_ptr, info_ptr);
   png_set_packing(png_ptr);
 
-  for(row=0; row<rb->height; row++) {
+  for(unsigned row=0; row<rb->height; row++) {
     unsigned char *rowptr = &(rb->data.palette.pixels[row*rb->width]);
     png_write_row(png_ptr, rowptr);
   }
@@ -381,7 +389,6 @@ int readPalette(const char *palette, rgbaPixel *entries, unsigned int *nEntries,
 {
   FILE *stream = NULL;
   char buffer[MS_BUFFER_LENGTH];
-  int r,g,b,a;
   *nEntries = 0;
 
   stream = fopen(palette, "r");
@@ -391,6 +398,7 @@ int readPalette(const char *palette, rgbaPixel *entries, unsigned int *nEntries,
   }
 
   while(fgets(buffer, MS_BUFFER_LENGTH, stream) && *nEntries<256) {
+    int r,g,b,a = 0;
     /* while there are colors to load */
     if(buffer[0] == '#' || buffer[0] == '\n' || buffer[0] == '\r')
       continue; /* skip comments and blank lines */
@@ -430,8 +438,6 @@ int saveAsPNG(mapObj *map,rasterBufferObj *rb, streamInfo *info, outputFormatObj
   int force_pc256 = MS_FALSE;
   int force_palette = MS_FALSE;
 
-  int ret = MS_FAILURE;
-
   const char *force_string,*zlib_compression;
   int compression = -1;
 
@@ -464,6 +470,7 @@ int saveAsPNG(mapObj *map,rasterBufferObj *rb, streamInfo *info, outputFormatObj
     qrb.height = rb->height;
     qrb.data.palette.pixels = (unsigned char*)malloc(qrb.width*qrb.height*sizeof(unsigned char));
     qrb.data.palette.scaling_maxval = 255;
+    int ret;
     if(force_pc256) {
       qrb.data.palette.palette = palette;
       qrb.data.palette.num_entries = atoi(msGetOutputFormatOption( format, "QUANTIZE_COLORS", "256"));
@@ -471,7 +478,7 @@ int saveAsPNG(mapObj *map,rasterBufferObj *rb, streamInfo *info, outputFormatObj
                                    NULL, 0,
                                    &qrb.data.palette.scaling_maxval);
     } else {
-      int colorsWanted = atoi(msGetOutputFormatOption( format, "QUANTIZE_COLORS", "0"));
+      unsigned colorsWanted = (unsigned)atoi(msGetOutputFormatOption( format, "QUANTIZE_COLORS", "0"));
       const char *palettePath = msGetOutputFormatOption( format, "PALETTE", "palette.txt");
       char szPath[MS_MAXPATHLEN];
       if(map) {
@@ -498,7 +505,7 @@ int saveAsPNG(mapObj *map,rasterBufferObj *rb, streamInfo *info, outputFormatObj
       }
     }
     if(ret != MS_FAILURE) {
-      ret = msClassifyRasterBuffer(rb,&qrb);
+      msClassifyRasterBuffer(rb,&qrb);
       ret = savePalettePNG(&qrb,info,compression);
     }
     msFree(qrb.data.palette.pixels);
@@ -506,7 +513,6 @@ int saveAsPNG(mapObj *map,rasterBufferObj *rb, streamInfo *info, outputFormatObj
   } else if(rb->type == MS_BUFFER_BYTE_RGBA) {
     png_infop info_ptr;
     int color_type;
-    int row;
     unsigned int *rowdata;
     png_structp png_ptr = png_create_write_struct(
                             PNG_LIBPNG_VER_STRING, NULL,NULL,NULL);
@@ -548,16 +554,15 @@ int saveAsPNG(mapObj *map,rasterBufferObj *rb, streamInfo *info, outputFormatObj
       png_set_filler(png_ptr, 0, PNG_FILLER_AFTER);
 
     rowdata = (unsigned int*)malloc(rb->width*sizeof(unsigned int));
-    for(row=0; row<rb->height; row++) {
+    for(unsigned row=0; row<rb->height; row++) {
       unsigned int *pixptr = rowdata;
-      int col;
       unsigned char *a,*r,*g,*b;
       r=rb->data.rgba.r+row*rb->data.rgba.row_step;
       g=rb->data.rgba.g+row*rb->data.rgba.row_step;
       b=rb->data.rgba.b+row*rb->data.rgba.row_step;
       if(rb->data.rgba.a) {
         a=rb->data.rgba.a+row*rb->data.rgba.row_step;
-        for(col=0; col<rb->width; col++) {
+        for(unsigned col=0; col<rb->width; col++) {
           if(*a) {
             double da = *a/255.0;
             unsigned char *pix = (unsigned char*)pixptr;
@@ -575,7 +580,7 @@ int saveAsPNG(mapObj *map,rasterBufferObj *rb, streamInfo *info, outputFormatObj
           b+=rb->data.rgba.pixel_step;
         }
       } else {
-        for(col=0; col<rb->width; col++) {
+        for(unsigned col=0; col<rb->width; col++) {
           unsigned char *pix = (unsigned char*)pixptr;
           pix[0] = *r;
           pix[1] = *g;
@@ -612,7 +617,7 @@ int readPNG(char *path, rasterBufferObj *rb)
 {
   png_uint_32 width,height;
   unsigned char *a,*r,*g,*b;
-  int bit_depth,color_type,i;
+  int bit_depth,color_type;
   unsigned char **row_pointers;
   png_structp png_ptr = NULL;
   png_infop info_ptr = NULL;
@@ -659,7 +664,7 @@ int readPNG(char *path, rasterBufferObj *rb)
   r = rb->data.rgba.r = &rb->data.rgba.pixels[2];
   a = rb->data.rgba.a = &rb->data.rgba.pixels[3];
 
-  for(i=0; i<height; i++) {
+  for(unsigned i=0; i<height; i++) {
     row_pointers[i] = &(rb->data.rgba.pixels[i*rb->data.rgba.row_step]);
   }
 
@@ -695,7 +700,7 @@ int readPNG(char *path, rasterBufferObj *rb)
   png_destroy_read_struct(&png_ptr, &info_ptr, NULL);
 
   /*premultiply data*/
-  for(i=0; i<width*height; i++) {
+  for(unsigned i=0; i<width*height; i++) {
     if(*a < 255) {
       if(*a == 0) {
         *r=*g=*b=0;
@@ -849,7 +854,7 @@ static char const *gif_error_msg()
 /* missing: set the first pointer to a,r,g,b */
 int readGIF(char *path, rasterBufferObj *rb)
 {
-  int i, j, codeSize, extCode, firstImageRead = MS_FALSE;
+  int codeSize, extCode, firstImageRead = MS_FALSE;
   unsigned char *r,*g,*b,*a;
   int transIdx = -1;
   GifFileType *image;
@@ -889,7 +894,7 @@ int readGIF(char *path, rasterBufferObj *rb)
   a = rb->data.rgba.a = &rb->data.rgba.pixels[3];
 
   cmap = (image->Image.ColorMap)?image->Image.ColorMap:image->SColorMap;
-  for(i=0; i<rb->width*rb->height; i++) {
+  for(unsigned i=0; i<rb->width*rb->height; i++) {
     *a = 255;
     *r = cmap->Colors[image->SBackGroundColor].Red;
     *g = cmap->Colors[image->SBackGroundColor].Green;
@@ -925,10 +930,10 @@ int readGIF(char *path, rasterBufferObj *rb)
         }
         if (!firstImageRead) {
 
-          int row = image->Image.Top;
-          int col = image->Image.Left;
-          int width = image->Image.Width;
-          int height = image->Image.Height;
+          unsigned row = image->Image.Top;
+          unsigned col = image->Image.Left;
+          unsigned width = image->Image.Width;
+          unsigned height = image->Image.Height;
 
           /* sanity check: */
           if(col+width>rb->width || row+height>rb->height) {
@@ -940,7 +945,7 @@ int readGIF(char *path, rasterBufferObj *rb)
           if(image->Image.Interlace) {
             int count;
             for(count=0; count<4; count++) {
-              for(i=row+interlacedOffsets[count]; i<row+height; i+=interlacedJumps[count]) {
+              for(unsigned i=row+interlacedOffsets[count]; i<row+height; i+=interlacedJumps[count]) {
                 int offset = i * rb->data.rgba.row_step + col * rb->data.rgba.pixel_step;
                 a = rb->data.rgba.a + offset;
                 r = rb->data.rgba.r + offset;
@@ -955,7 +960,7 @@ int readGIF(char *path, rasterBufferObj *rb)
                   return MS_FAILURE;
                 }
 
-                for(j=0; j<width; j++) {
+                for(unsigned j=0; j<width; j++) {
                   GifPixelType pix = line[j];
                   if(transIdx == -1 || pix != transIdx) {
                     *a = 255;
@@ -973,7 +978,7 @@ int readGIF(char *path, rasterBufferObj *rb)
               }
             }
           } else {
-            for (i = 0; i < height; i++) {
+            for (unsigned i = 0; i < height; i++) {
               int offset = i * rb->data.rgba.row_step + col * rb->data.rgba.pixel_step;
               a = rb->data.rgba.a + offset;
               r = rb->data.rgba.r + offset;
@@ -987,7 +992,7 @@ int readGIF(char *path, rasterBufferObj *rb)
 #endif
                 return MS_FAILURE;
               }
-              for(j=0; j<width; j++) {
+              for(unsigned j=0; j<width; j++) {
                 GifPixelType pix = line[j];
                 if(transIdx == -1 || pix != transIdx) {
                   *a = 255;
