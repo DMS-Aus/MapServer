@@ -6088,7 +6088,7 @@ static int loadMapInternal(mapObj *map)
         if(getDouble(&(map->defresolution), MS_NUM_CHECK_RANGE, MS_RESOLUTION_MIN, MS_RESOLUTION_MAX) == -1) return MS_FAILURE;
         break;
        case(PIXELADJUSTMENT):
-        if(getInteger(&(map->pixeladjustment)) == -1) return MS_FAILURE;
+        if(getInteger(&(map->pixeladjustment), MS_NUM_CHECK_RANGE, 0, 1) == -1) return MS_FAILURE;
         break;
       case(SCALE):
       case(SCALEDENOM):

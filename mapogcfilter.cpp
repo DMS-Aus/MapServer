@@ -2205,6 +2205,7 @@ char *FLTGetSQLExpression(FilterEncodingNode *psFilterNode, layerObj *lp)
             if (strlen(pszId) <= 0)
               continue;
 
+            char szTmp[256];
             snprintf(szTmp, sizeof(szTmp), "%s_type",  pszAttribute);
             pszOFGType = msOWSLookupMetadata(&(lp->metadata), "OFG", szTmp);
             if (pszOFGType!= NULL && strcasecmp(pszOFGType, "Character") == 0)
@@ -2213,7 +2214,6 @@ char *FLTGetSQLExpression(FilterEncodingNode *psFilterNode, layerObj *lp)
               bString = 1;
 
             pszEscapedStr = msLayerEscapeSQLParam(lp, pszId);
-            char szTmp[256];
             if (bString)
             {
               if( lp->connectiontype == MS_OGR || lp->connectiontype == MS_POSTGIS )

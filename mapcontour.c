@@ -250,7 +250,7 @@ static int msContourLayerReadRaster(layerObj *layer, rectObj rect)
     mapRect = rect;
     if( map->cellsize == 0 )
     {
-        map->cellsize = msAdjustExtent(&mapRect,map->width,map->height);
+        map->cellsize = msAdjustExtent(&mapRect,map->width,map->height,map->pixeladjustment);
     }
     map_cellsize_x = map_cellsize_y = map->cellsize;
     /* if necessary, project the searchrect to source coords */

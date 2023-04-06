@@ -80,7 +80,7 @@
 int yylex(YYSTYPE *, parseObj *); /* prototype functions, defined after the grammar */
 int yyerror(parseObj *, const char *);
 
-#line 84 "/vagrant/mapparser.c" /* yacc.c:339  */
+#line 84 "./mapparser.c" /* yacc.c:339  */
 
 # ifndef YY_NULLPTR
 #  if defined __cplusplus && 201103L <= __cplusplus
@@ -100,8 +100,8 @@ int yyerror(parseObj *, const char *);
 
 /* In a future release of Bison, this section will be replaced
    by #include "mapparser.h".  */
-#ifndef YY_YY_VAGRANT_MAPPARSER_H_INCLUDED
-# define YY_YY_VAGRANT_MAPPARSER_H_INCLUDED
+#ifndef YY_YY_MAPPARSER_H_INCLUDED
+# define YY_YY_MAPPARSER_H_INCLUDED
 /* Debug traces.  */
 #ifndef YYDEBUG
 # define YYDEBUG 0
@@ -230,7 +230,7 @@ union YYSTYPE
   struct tm tmval;
   shapeObj *shpval;
 
-#line 234 "/vagrant/mapparser.c" /* yacc.c:355  */
+#line 234 "./mapparser.c" /* yacc.c:355  */
 };
 
 typedef union YYSTYPE YYSTYPE;
@@ -242,11 +242,11 @@ typedef union YYSTYPE YYSTYPE;
 
 int yyparse (parseObj *p);
 
-#endif /* !YY_YY_VAGRANT_MAPPARSER_H_INCLUDED  */
+#endif /* !YY_YY_MAPPARSER_H_INCLUDED  */
 
 /* Copy the second part of user declarations.  */
 
-#line 250 "/vagrant/mapparser.c" /* yacc.c:358  */
+#line 250 "./mapparser.c" /* yacc.c:358  */
 
 #ifdef short
 # undef short
@@ -1576,7 +1576,7 @@ yyreduce:
       break;
     }
   }
-#line 1580 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 1580 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 4:
@@ -1595,7 +1595,7 @@ yyreduce:
       break;
     }
   }
-#line 1599 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 1599 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 5:
@@ -1614,7 +1614,7 @@ yyreduce:
       break;
     }
   }
-#line 1618 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 1618 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 6:
@@ -1627,13 +1627,13 @@ yyreduce:
       break;
     }
   }
-#line 1631 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 1631 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 8:
 #line 121 "mapparser.y" /* yacc.c:1646  */
     { (yyval.intval) = (yyvsp[-1].intval); }
-#line 1637 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 1637 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 9:
@@ -1642,7 +1642,7 @@ yyreduce:
     (yyval.intval) = MS_FALSE;
     if((yyvsp[-2].intval) == (yyvsp[0].intval)) (yyval.intval) = MS_TRUE;
   }
-#line 1646 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 1646 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 10:
@@ -1655,7 +1655,7 @@ yyreduce:
     else
       (yyval.intval) = MS_FALSE;
   }
-#line 1659 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 1659 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 11:
@@ -1669,7 +1669,7 @@ yyreduce:
     } else
       (yyval.intval) = MS_FALSE;
   }
-#line 1673 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 1673 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 12:
@@ -1682,7 +1682,7 @@ yyreduce:
     else
       (yyval.intval) = MS_FALSE;
   }
-#line 1686 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 1686 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 13:
@@ -1696,7 +1696,7 @@ yyreduce:
     } else
       (yyval.intval) = MS_FALSE;
   }
-#line 1700 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 1700 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 14:
@@ -1709,7 +1709,7 @@ yyreduce:
     else
       (yyval.intval) = MS_FALSE;
   }
-#line 1713 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 1713 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 15:
@@ -1723,7 +1723,7 @@ yyreduce:
     } else
       (yyval.intval) = MS_FALSE;
   }
-#line 1727 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 1727 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 16:
@@ -1736,7 +1736,7 @@ yyreduce:
     else
       (yyval.intval) = MS_FALSE;
   }
-#line 1740 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 1740 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 17:
@@ -1750,19 +1750,19 @@ yyreduce:
     } else
       (yyval.intval) = MS_FALSE;
   }
-#line 1754 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 1754 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 18:
 #line 194 "mapparser.y" /* yacc.c:1646  */
     { (yyval.intval) = !(yyvsp[0].intval); }
-#line 1760 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 1760 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 19:
 #line 195 "mapparser.y" /* yacc.c:1646  */
     { (yyval.intval) = !(yyvsp[0].dblval); }
-#line 1766 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 1766 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 20:
@@ -1787,7 +1787,7 @@ yyreduce:
     free((yyvsp[-2].strval));
     free((yyvsp[0].strval));
   }
-#line 1791 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 1791 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 21:
@@ -1812,7 +1812,7 @@ yyreduce:
     free((yyvsp[-2].strval));
     free((yyvsp[0].strval));
   }
-#line 1816 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 1816 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 22:
@@ -1823,7 +1823,7 @@ yyreduce:
     else
       (yyval.intval) = MS_FALSE;
   }
-#line 1827 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 1827 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 23:
@@ -1834,7 +1834,7 @@ yyreduce:
     else
       (yyval.intval) = MS_FALSE;
   }
-#line 1838 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 1838 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 24:
@@ -1845,7 +1845,7 @@ yyreduce:
     else
       (yyval.intval) = MS_FALSE;
   }
-#line 1849 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 1849 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 25:
@@ -1856,7 +1856,7 @@ yyreduce:
     else
       (yyval.intval) = MS_FALSE;
   }
-#line 1860 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 1860 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 26:
@@ -1867,7 +1867,7 @@ yyreduce:
     else
       (yyval.intval) = MS_FALSE;
   }
-#line 1871 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 1871 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 27:
@@ -1878,7 +1878,7 @@ yyreduce:
     else
       (yyval.intval) = MS_FALSE;
   }
-#line 1882 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 1882 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 28:
@@ -1891,7 +1891,7 @@ yyreduce:
     free((yyvsp[-2].strval));
     free((yyvsp[0].strval));
   }
-#line 1895 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 1895 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 29:
@@ -1904,7 +1904,7 @@ yyreduce:
     free((yyvsp[-2].strval));
     free((yyvsp[0].strval));
   }
-#line 1908 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 1908 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 30:
@@ -1917,7 +1917,7 @@ yyreduce:
     free((yyvsp[-2].strval));
     free((yyvsp[0].strval));
   }
-#line 1921 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 1921 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 31:
@@ -1930,7 +1930,7 @@ yyreduce:
     free((yyvsp[-2].strval));
     free((yyvsp[0].strval));
   }
-#line 1934 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 1934 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 32:
@@ -1943,7 +1943,7 @@ yyreduce:
     free((yyvsp[-2].strval));
     free((yyvsp[0].strval));
   }
-#line 1947 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 1947 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 33:
@@ -1956,7 +1956,7 @@ yyreduce:
     free((yyvsp[-2].strval));
     free((yyvsp[0].strval));
   }
-#line 1960 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 1960 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 34:
@@ -1967,7 +1967,7 @@ yyreduce:
     else
       (yyval.intval) = MS_FALSE;
   }
-#line 1971 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 1971 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 35:
@@ -1978,7 +1978,7 @@ yyreduce:
     else
       (yyval.intval) = MS_FALSE;
   }
-#line 1982 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 1982 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 36:
@@ -1989,7 +1989,7 @@ yyreduce:
     else
       (yyval.intval) = MS_FALSE;
   }
-#line 1993 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 1993 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 37:
@@ -2000,7 +2000,7 @@ yyreduce:
     else
       (yyval.intval) = MS_FALSE;
   }
-#line 2004 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 2004 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 38:
@@ -2011,7 +2011,7 @@ yyreduce:
     else
       (yyval.intval) = MS_FALSE;
   }
-#line 2015 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 2015 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 39:
@@ -2022,7 +2022,7 @@ yyreduce:
     else
       (yyval.intval) = MS_FALSE;
   }
-#line 2026 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 2026 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 40:
@@ -2048,7 +2048,7 @@ yyreduce:
     free((yyvsp[-2].strval));
     free((yyvsp[0].strval));
   }
-#line 2052 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 2052 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 41:
@@ -2073,7 +2073,7 @@ yyreduce:
       (yyval.intval) = MS_TRUE;  
     free((yyvsp[0].strval));
   }
-#line 2077 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 2077 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 42:
@@ -2084,7 +2084,7 @@ yyreduce:
     else
       (yyval.intval) = MS_FALSE;
   }
-#line 2088 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 2088 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 43:
@@ -2097,7 +2097,7 @@ yyreduce:
     free((yyvsp[-2].strval));
     free((yyvsp[0].strval));
   }
-#line 2101 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 2101 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 44:
@@ -2108,7 +2108,7 @@ yyreduce:
     else
       (yyval.intval) = MS_FALSE;
   }
-#line 2112 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 2112 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 45:
@@ -2130,7 +2130,7 @@ yyreduce:
     } else
       (yyval.intval) = rval;
   }
-#line 2134 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 2134 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 46:
@@ -2152,7 +2152,7 @@ yyreduce:
     } else
       (yyval.intval) = rval;
   }
-#line 2156 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 2156 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 47:
@@ -2174,7 +2174,7 @@ yyreduce:
     } else
     (yyval.intval) = rval;
   }
-#line 2178 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 2178 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 48:
@@ -2196,7 +2196,7 @@ yyreduce:
     } else
       (yyval.intval) = rval;
   }
-#line 2200 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 2200 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 49:
@@ -2218,7 +2218,7 @@ yyreduce:
     } else
       (yyval.intval) = rval;
   }
-#line 2222 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 2222 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 50:
@@ -2240,7 +2240,7 @@ yyreduce:
     } else
       (yyval.intval) = rval;
   }
-#line 2244 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 2244 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 51:
@@ -2262,7 +2262,7 @@ yyreduce:
     } else
       (yyval.intval) = rval;
   }
-#line 2266 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 2266 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 52:
@@ -2284,7 +2284,7 @@ yyreduce:
     } else
       (yyval.intval) = rval;
   }
-#line 2288 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 2288 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 53:
@@ -2306,7 +2306,7 @@ yyreduce:
     } else
       (yyval.intval) = rval;
   }
-#line 2310 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 2310 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 54:
@@ -2328,7 +2328,7 @@ yyreduce:
     } else
       (yyval.intval) = rval;
   }
-#line 2332 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 2332 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 55:
@@ -2350,7 +2350,7 @@ yyreduce:
     } else
       (yyval.intval) = rval;
   }
-#line 2354 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 2354 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 56:
@@ -2372,7 +2372,7 @@ yyreduce:
     } else
       (yyval.intval) = rval;
   }
-#line 2376 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 2376 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 57:
@@ -2394,7 +2394,7 @@ yyreduce:
     } else
       (yyval.intval) = rval;
   }
-#line 2398 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 2398 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 58:
@@ -2416,7 +2416,7 @@ yyreduce:
     } else
       (yyval.intval) = rval;
   }
-#line 2420 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 2420 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 59:
@@ -2438,7 +2438,7 @@ yyreduce:
     } else
       (yyval.intval) = rval;
   }
-#line 2442 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 2442 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 60:
@@ -2460,7 +2460,7 @@ yyreduce:
     } else
       (yyval.intval) = rval;
   }
-#line 2464 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 2464 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 61:
@@ -2481,7 +2481,7 @@ yyreduce:
     else
       (yyval.intval) = MS_FALSE;
   }
-#line 2485 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 2485 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 62:
@@ -2502,37 +2502,37 @@ yyreduce:
     else
       (yyval.intval) = MS_FALSE;
   }
-#line 2506 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 2506 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 64:
 #line 724 "mapparser.y" /* yacc.c:1646  */
     { (yyval.dblval) = (yyvsp[-1].dblval); }
-#line 2512 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 2512 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 65:
 #line 725 "mapparser.y" /* yacc.c:1646  */
     { (yyval.dblval) = (yyvsp[-2].dblval) + (yyvsp[0].dblval); }
-#line 2518 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 2518 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 66:
 #line 726 "mapparser.y" /* yacc.c:1646  */
     { (yyval.dblval) = (yyvsp[-2].dblval) - (yyvsp[0].dblval); }
-#line 2524 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 2524 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 67:
 #line 727 "mapparser.y" /* yacc.c:1646  */
     { (yyval.dblval) = (yyvsp[-2].dblval) * (yyvsp[0].dblval); }
-#line 2530 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 2530 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 68:
 #line 728 "mapparser.y" /* yacc.c:1646  */
     { (yyval.dblval) = (int)(yyvsp[-2].dblval) % (int)(yyvsp[0].dblval); }
-#line 2536 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 2536 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 69:
@@ -2544,25 +2544,25 @@ yyreduce:
     } else
       (yyval.dblval) = (yyvsp[-2].dblval) / (yyvsp[0].dblval); 
   }
-#line 2548 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 2548 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 70:
 #line 736 "mapparser.y" /* yacc.c:1646  */
     { (yyval.dblval) = (yyvsp[0].dblval); }
-#line 2554 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 2554 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 71:
 #line 737 "mapparser.y" /* yacc.c:1646  */
     { (yyval.dblval) = pow((yyvsp[-2].dblval), (yyvsp[0].dblval)); }
-#line 2560 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 2560 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 72:
 #line 738 "mapparser.y" /* yacc.c:1646  */
     { (yyval.dblval) = strlen((yyvsp[-1].strval)); }
-#line 2566 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 2566 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 73:
@@ -2578,25 +2578,25 @@ yyreduce:
       free((yyvsp[-1].shpval));
     }
   }
-#line 2582 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 2582 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 74:
 #line 750 "mapparser.y" /* yacc.c:1646  */
     { (yyval.dblval) = (MS_NINT((yyvsp[-3].dblval)/(yyvsp[-1].dblval)))*(yyvsp[-1].dblval); }
-#line 2588 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 2588 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 75:
 #line 751 "mapparser.y" /* yacc.c:1646  */
     { (yyval.dblval) = (MS_NINT((yyvsp[-1].dblval))); }
-#line 2594 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 2594 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 77:
 #line 755 "mapparser.y" /* yacc.c:1646  */
     { (yyval.shpval) = (yyvsp[-1].shpval); }
-#line 2600 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 2600 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 78:
@@ -2615,7 +2615,7 @@ yyreduce:
     s->scratch = MS_TRUE;
     (yyval.shpval) = s;
   }
-#line 2619 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 2619 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 79:
@@ -2634,7 +2634,7 @@ yyreduce:
     s->scratch = MS_TRUE;
     (yyval.shpval) = s;
   }
-#line 2638 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 2638 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 80:
@@ -2653,7 +2653,7 @@ yyreduce:
     s->scratch = MS_TRUE;
     (yyval.shpval) = s;
   }
-#line 2657 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 2657 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 81:
@@ -2672,7 +2672,7 @@ yyreduce:
     s->scratch = MS_TRUE;
     (yyval.shpval) = s;
   }
-#line 2676 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 2676 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 82:
@@ -2691,7 +2691,7 @@ yyreduce:
     s->scratch = MS_TRUE;
     (yyval.shpval) = s;
   }
-#line 2695 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 2695 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 83:
@@ -2710,7 +2710,7 @@ yyreduce:
     s->scratch = MS_TRUE;
     (yyval.shpval) = s;
   }
-#line 2714 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 2714 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 84:
@@ -2729,7 +2729,7 @@ yyreduce:
     s->scratch = MS_TRUE;
     (yyval.shpval) = s;
   }
-#line 2733 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 2733 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 85:
@@ -2748,7 +2748,7 @@ yyreduce:
     s->scratch = MS_TRUE;
     (yyval.shpval) = s;
   }
-#line 2752 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 2752 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 86:
@@ -2767,7 +2767,7 @@ yyreduce:
     s->scratch = MS_TRUE;
     (yyval.shpval) = s;
   }
-#line 2771 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 2771 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 87:
@@ -2786,7 +2786,7 @@ yyreduce:
     s->scratch = MS_TRUE;
     (yyval.shpval) = s;
   }
-#line 2790 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 2790 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 88:
@@ -2805,7 +2805,7 @@ yyreduce:
     s->scratch = MS_TRUE;
     (yyval.shpval) = s;
   }
-#line 2809 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 2809 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 89:
@@ -2824,7 +2824,7 @@ yyreduce:
     s->scratch = MS_TRUE;
     (yyval.shpval) = s;
   }
-#line 2828 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 2828 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 90:
@@ -2844,7 +2844,7 @@ yyreduce:
     s->scratch = MS_TRUE;
     (yyval.shpval) = s;
   }
-#line 2848 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 2848 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 91:
@@ -2869,13 +2869,13 @@ yyreduce:
     return(-1);
 #endif
   }
-#line 2873 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 2873 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 93:
 #line 962 "mapparser.y" /* yacc.c:1646  */
     { (yyval.strval) = (yyvsp[-1].strval); }
-#line 2879 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 2879 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 94:
@@ -2884,7 +2884,7 @@ yyreduce:
     (yyval.strval) = (char *)malloc(strlen((yyvsp[-2].strval)) + strlen((yyvsp[0].strval)) + 1);
     sprintf((yyval.strval), "%s%s", (yyvsp[-2].strval), (yyvsp[0].strval)); free((yyvsp[-2].strval)); free((yyvsp[0].strval)); 
   }
-#line 2888 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 2888 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 95:
@@ -2894,7 +2894,7 @@ yyreduce:
     sprintf((yyval.strval), (yyvsp[-1].strval), (yyvsp[-3].dblval));
     free((yyvsp[-1].strval));
   }
-#line 2898 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 2898 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 96:
@@ -2903,7 +2903,7 @@ yyreduce:
     (yyvsp[-1].strval) = msCommifyString((yyvsp[-1].strval)); 
     (yyval.strval) = (yyvsp[-1].strval); 
   }
-#line 2907 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 2907 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 97:
@@ -2912,7 +2912,7 @@ yyreduce:
     msStringToUpper((yyvsp[-1].strval)); 
     (yyval.strval) = (yyvsp[-1].strval); 
   }
-#line 2916 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 2916 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 98:
@@ -2921,7 +2921,7 @@ yyreduce:
     msStringToLower((yyvsp[-1].strval)); 
     (yyval.strval) = (yyvsp[-1].strval); 
   }
-#line 2925 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 2925 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 99:
@@ -2930,7 +2930,7 @@ yyreduce:
     msStringInitCap((yyvsp[-1].strval)); 
     (yyval.strval) = (yyvsp[-1].strval); 
   }
-#line 2934 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 2934 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 100:
@@ -2939,17 +2939,17 @@ yyreduce:
     msStringFirstCap((yyvsp[-1].strval)); 
     (yyval.strval) = (yyvsp[-1].strval); 
   }
-#line 2943 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 2943 "./mapparser.c" /* yacc.c:1646  */
     break;
 
   case 102:
 #line 995 "mapparser.y" /* yacc.c:1646  */
     { (yyval.tmval) = (yyvsp[-1].tmval); }
-#line 2949 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 2949 "./mapparser.c" /* yacc.c:1646  */
     break;
 
 
-#line 2953 "/vagrant/mapparser.c" /* yacc.c:1646  */
+#line 2953 "./mapparser.c" /* yacc.c:1646  */
       default: break;
     }
   /* User semantic actions sometimes alter yychar, and that requires

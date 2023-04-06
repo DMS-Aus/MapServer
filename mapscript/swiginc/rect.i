@@ -91,8 +91,8 @@
     }
 
     /// Adjust the rect to fit the width and height. Returns cellsize of rect.
-    double fit(int width, int height) {
-        return  msAdjustExtent(self, width, height);
+    double fit(int width, int height, int pixeladjustment) {
+        return  msAdjustExtent(self, width, height, pixeladjustment);
     } 
 
     /// Draw rectangle into img using style defined by the classindex class of layer. 

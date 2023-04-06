@@ -1976,7 +1976,8 @@ void msPopulateTextSymbolForLabelAndString(textSymbolObj *ts, labelObj *l, char 
       symbolSetObj symbolset; ///< See :ref:`SYMBOLSET <mapfile-map-symbolset>`
       fontSetObj fontset; ///< See :ref:`FONTSET <mapfile-map-fontset>`
 
-      int pixeladjustment; /* 0 or 1 (default) */      labelCacheObj labelcache; ///< We need this here so multiple feature processors can access it
+      int pixeladjustment; /* 0 or 1 (default) */      
+	  labelCacheObj labelcache; ///< We need this here so multiple feature processors can access it
       int numoutputformats; ///< Number of output formats available in the map
       outputFormatObj *outputformat; ///< See :ref:`OUTPUTFORMAT <mapfile-map-outputformat>`
       char *imagetype; ///< Name of current outputformat
@@ -2798,7 +2799,7 @@ extern "C" {
   MS_DLL_EXPORT char *msEvalTextExpression(expressionObj *expr, shapeObj *shape);
   MS_DLL_EXPORT char *msEvalTextExpressionJSonEscape(expressionObj *expr, shapeObj *shape);
   MS_DLL_EXPORT double msEvalDoubleExpression(expressionObj *expr, shapeObj *shape);
-  MS_DLL_EXPORT double msAdjustExtent(rectObj *rect, int width, int height);
+  MS_DLL_EXPORT double msAdjustExtent(rectObj *rect, int width, int height, int pixeladjustment);
   MS_DLL_EXPORT int msConstrainExtent(rectObj *bounds, rectObj *rect, double overlay);
   MS_DLL_EXPORT int *msGetLayersIndexByGroup(mapObj *map, char *groupname, int *nCount);
   MS_DLL_EXPORT unsigned char *msSaveImageBuffer(imageObj* image, int *size_ptr, outputFormatObj *format);
