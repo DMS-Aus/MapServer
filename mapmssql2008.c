@@ -1617,12 +1617,6 @@ static int prepare_database(layerObj *layer, rectObj rect, char **query_string, 
           query = msStringConcatenate(query, "]");
       }
   }
-  else if (isQuery && !layerinfo->sort_spec) {
-    /* Add orderby to make the result set order deterministic */
-    query = msStringConcatenate(query, " ORDER BY [");
-    query = msStringConcatenate(query, layerinfo->urid_name);
-    query = msStringConcatenate(query, "]");
-  }
 
   if (layer->debug) {
       msDebug("query:%s\n", query);
@@ -2279,17 +2273,6 @@ int msMSSQL2008LayerGetShapeRandom(layerObj *layer, shapeObj *shape, long *recor
         int r = 0;
         while (r < 20) {
           rc = SQLGetData(layerinfo->conn->hstmt, (SQLUSMALLINT)(t + 1), targetType, bufferLocation, emptyLen, &retLen);
-          
-          if (needLen >= nDataLen) {
-            /* need more data */
-            /* trimming the extra terminators */
-            if (nFetchType == SQL_C_CHAR)
-             while ((nDataLen > 1) && (wrkBuffer[nDataLen - 1] == 0))
-              --nDataLen;
-            else if (nFetchType == SQL_C_WCHAR)
-             while ((nDataLen > 1) && (wrkBuffer[nDataLen - 1] == 0)
-              && (wrkBuffer[nDataLen - 2] == 0))
-                nDataLen -= 2;
 
           if (rc == SQL_SUCCESS || rc == SQL_SUCCESS_WITH_INFO)
             totalLen += retLen > emptyLen || retLen == SQL_NO_TOTAL ? emptyLen : retLen;
