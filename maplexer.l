@@ -380,11 +380,11 @@ char path[MS_MAXPATHLEN];
 <INITIAL>outlinewidth                          { MS_LEXER_RETURN_TOKEN(OUTLINEWIDTH); }
 <INITIAL>outputformat                          { MS_LEXER_RETURN_TOKEN(OUTPUTFORMAT); }
 <INITIAL>partials                              { MS_LEXER_RETURN_TOKEN(PARTIALS); }
-<INITIAL,URL_STRING>pattern                    { MS_LEXER_RETURN_TOKEN(PATTERN); }
-<INITIAL,URL_STRING>pixeladjustment            { MS_LEXER_RETURN_TOKEN(PIXELADJUSTMENT); }
-<INITIAL,URL_STRING>points                     { MS_LEXER_RETURN_TOKEN(POINTS); }
-<INITIAL,URL_STRING>items                      { MS_LEXER_RETURN_TOKEN(ITEMS); }
-<INITIAL,URL_STRING>position                   { MS_LEXER_RETURN_TOKEN(POSITION); }
+<INITIAL>pattern                               { MS_LEXER_RETURN_TOKEN(PATTERN); }
+<INITIAL>pixeladjustment                       { MS_LEXER_RETURN_TOKEN(PIXELADJUSTMENT); }
+<INITIAL>points                                { MS_LEXER_RETURN_TOKEN(POINTS); }
+<INITIAL>items                                 { MS_LEXER_RETURN_TOKEN(ITEMS); }
+<INITIAL>position                              { MS_LEXER_RETURN_TOKEN(POSITION); }
 <INITIAL>postlabelcache                        { MS_LEXER_RETURN_TOKEN(POSTLABELCACHE); }
 <INITIAL>priority                              { MS_LEXER_RETURN_TOKEN(PRIORITY); }
 <INITIAL>processing                            { MS_LEXER_RETURN_TOKEN(PROCESSING); }
