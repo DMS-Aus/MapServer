@@ -41,12 +41,46 @@ int msyylineno = 1;
 
 #define YY_NO_INPUT
 
+/* Below is a redefinition of the default YY_INPUT() macro but replacing the
+ * YY_FATAL_ERROR() macro with a call to msSetError().
+ */
+/* Gets input and stuffs it into "buf".  number of characters read, or YY_NULL,
+ * is returned in "result".
+ */
+#define YY_INPUT(buf,result,max_size) \
+	if ( YY_CURRENT_BUFFER_LVALUE->yy_is_interactive ) \
+		{ \
+		int c = '*'; \
+		int n; \
+		for ( n = 0; n < max_size && \
+			     (c = getc( yyin )) != EOF && c != '\n'; ++n ) \
+			buf[n] = (char) c; \
+		if ( c == '\n' ) \
+			buf[n++] = (char) c; \
+		if ( c == EOF && ferror( yyin ) ) \
+            msSetError(MS_PARSEERR, "%s", "msyyparse()", "input in flex scanner failed"); \
+		result = n; \
+		} \
+	else \
+		{ \
+		errno=0; \
+		while ( (result = (int) fread(buf, 1, (yy_size_t) max_size, yyin)) == 0 && ferror(yyin)) \
+			{ \
+			if( errno != EINTR) \
+				{ \
+                msSetError(MS_PARSEERR, "%s", "msyyparse()", "input in flex scanner failed"); \
+				break; \
+				} \
+			errno=0; \
+			clearerr(yyin); \
+			} \
+		}
+
 int msyysource=MS_STRING_TOKENS;
 double msyynumber;
 int msyystate=MS_TOKENIZE_DEFAULT;
 char *msyystring=NULL;
 char *msyybasepath=NULL;
-char *msyystring_buffer_ptr;
 int  msyystring_buffer_size = 0;
 int  msyystring_size;
 char msyystring_begin;
@@ -54,25 +88,21 @@ char *msyystring_buffer = NULL;
 int  msyystring_icase = MS_FALSE;
 int  msyystring_return_state;
 int  msyystring_begin_state;
-int  msyystring_size_tmp;
 
 int msyyreturncomments = 0;
 
-#define MS_LEXER_STRING_REALLOC(string, string_size, max_size, string_ptr)   \
+#define MS_LEXER_STRING_REALLOC(string, string_size, max_size)   \
   do { \
    const int string_size_macro = (int)(string_size); \
    if (string_size_macro >= (int)(max_size)) {         \
-       msyystring_size_tmp = (max_size);     \
        max_size = (((int)(max_size)*2) > string_size_macro) ? ((int)(max_size))*2 : string_size_macro+1;   \
        string = (char *) msSmallRealloc(string, sizeof(char *) * (max_size));  \
-       string_ptr = string;    \
-       string_ptr += msyystring_size_tmp; \
    } \
   } while(0)
 
 #define MS_LEXER_RETURN_TOKEN(token) \
    MS_LEXER_STRING_REALLOC(msyystring_buffer, strlen(msyytext),  \
-                           msyystring_buffer_size, msyystring_buffer_ptr); \
+                           msyystring_buffer_size); \
    strcpy(msyystring_buffer, msyytext); \
    return(token); 
 
@@ -490,9 +520,9 @@ char path[MS_MAXPATHLEN];
 
 <INITIAL>\[[^\]]*\]                            {
                                                  msyytext++;
-                                                 msyytext[strlen(msyytext)-1] = '\0';
-                                                 MS_LEXER_STRING_REALLOC(msyystring_buffer, strlen(msyytext), 
-                                                                         msyystring_buffer_size, msyystring_buffer_ptr);
+                                                 msyytext[msyyleng-1-1] = '\0';
+                                                 MS_LEXER_STRING_REALLOC(msyystring_buffer, msyyleng, 
+                                                                         msyystring_buffer_size);
                                                  strcpy(msyystring_buffer,msyytext);
                                                  return(MS_BINDING);
                                                }
@@ -512,42 +542,42 @@ char path[MS_MAXPATHLEN];
 <EXPRESSION_STRING>\[[^\]]*\] {
   /* attribute binding - numeric (no quotes) */
   msyytext++;
-  msyytext[strlen(msyytext)-1] = '\0';
-  MS_LEXER_STRING_REALLOC(msyystring_buffer, strlen(msyytext), 
-                          msyystring_buffer_size, msyystring_buffer_ptr);
+  msyytext[msyyleng-1-1] = '\0';
+  MS_LEXER_STRING_REALLOC(msyystring_buffer, msyyleng, 
+                          msyystring_buffer_size);
   strcpy(msyystring_buffer, msyytext);
   return(MS_TOKEN_BINDING_DOUBLE);
 }
 <EXPRESSION_STRING>\"\[[^\"]*\]\"|\'\[[^\']*\]\' {
   /* attribute binding - string (single or double quotes) */
   msyytext+=2;
-  msyytext[strlen(msyytext)-2] = '\0';
-  MS_LEXER_STRING_REALLOC(msyystring_buffer, strlen(msyytext), 
-                          msyystring_buffer_size, msyystring_buffer_ptr);
+  msyytext[msyyleng-2-2] = '\0';
+  MS_LEXER_STRING_REALLOC(msyystring_buffer, msyyleng, 
+                          msyystring_buffer_size);
   strcpy(msyystring_buffer, msyytext);
   return(MS_TOKEN_BINDING_STRING);
 }
 <EXPRESSION_STRING>\`\[[^\`]*\]\` {
   /* attribute binding - time */
   msyytext+=2;
-  msyytext[strlen(msyytext)-2] = '\0';
-  MS_LEXER_STRING_REALLOC(msyystring_buffer, strlen(msyytext),
-                          msyystring_buffer_size, msyystring_buffer_ptr);
+  msyytext[msyyleng-2-2] = '\0';
+  MS_LEXER_STRING_REALLOC(msyystring_buffer, msyyleng,
+                          msyystring_buffer_size);
   strcpy(msyystring_buffer, msyytext);
   return(MS_TOKEN_BINDING_TIME);
 }
 
 <INITIAL>-?[0-9]+|-?[0-9]+\.[0-9]*|-?\.[0-9]*|-?[0-9]+[eE][+-]?[0-9]+|-?[0-9]+\.[0-9]*[eE][+-]?[0-9]+|-?\.[0-9]*[eE][+-]?[0-9]+ {
-  MS_LEXER_STRING_REALLOC(msyystring_buffer, strlen(msyytext), 
-                          msyystring_buffer_size, msyystring_buffer_ptr);
+  MS_LEXER_STRING_REALLOC(msyystring_buffer, msyyleng, 
+                          msyystring_buffer_size);
   strcpy(msyystring_buffer,msyytext);
   msyynumber = atof(msyytext);
   return(MS_NUMBER); 
 }
 
 <EXPRESSION_STRING>-?[0-9]+|-?[0-9]+\.[0-9]*|-?\.[0-9]*|-?[0-9]+[eE][+-]?[0-9]+|-?[0-9]+\.[0-9]*[eE][+-]?[0-9]+|-?\.[0-9]*[eE][+-]?[0-9]+ {
-  MS_LEXER_STRING_REALLOC(msyystring_buffer, strlen(msyytext), 
-                          msyystring_buffer_size, msyystring_buffer_ptr);
+  MS_LEXER_STRING_REALLOC(msyystring_buffer, msyyleng, 
+                          msyystring_buffer_size);
   strcpy(msyystring_buffer,msyytext);
   msyynumber = atof(msyytext);
   return(MS_TOKEN_LITERAL_NUMBER);
@@ -555,45 +585,45 @@ char path[MS_MAXPATHLEN];
 
 <EXPRESSION_STRING>\`[^\`]*\` {
   msyytext++;
-  msyytext[strlen(msyytext)-1] = '\0';
-  MS_LEXER_STRING_REALLOC(msyystring_buffer, strlen(msyytext), 
-                          msyystring_buffer_size, msyystring_buffer_ptr);
+  msyytext[msyyleng-1-1] = '\0';
+  MS_LEXER_STRING_REALLOC(msyystring_buffer, msyyleng, 
+                          msyystring_buffer_size);
   strcpy(msyystring_buffer, msyytext);
   return(MS_TOKEN_LITERAL_TIME);
 }
 
 <INITIAL>\/[^*]{1}[^\/]*\/i         {
                                                  msyytext++;
-                                                 msyytext[strlen(msyytext)-2] = '\0';
-                                                 MS_LEXER_STRING_REALLOC(msyystring_buffer, strlen(msyytext), 
-                                                                         msyystring_buffer_size, msyystring_buffer_ptr);
+                                                 msyytext[msyyleng-1-2] = '\0';
+                                                 MS_LEXER_STRING_REALLOC(msyystring_buffer, msyyleng, 
+                                                                         msyystring_buffer_size);
                                                  strcpy(msyystring_buffer, msyytext);
                                                  return(MS_IREGEX);
                                                }
 
 <INITIAL>\/[^*]{1}[^\/]*\/          {
                                                  msyytext++;
-                                                 msyytext[strlen(msyytext)-1] = '\0';
-                                                 MS_LEXER_STRING_REALLOC(msyystring_buffer, strlen(msyytext), 
-                                                                         msyystring_buffer_size, msyystring_buffer_ptr);
+                                                 msyytext[msyyleng-1-1] = '\0';
+                                                 MS_LEXER_STRING_REALLOC(msyystring_buffer, msyyleng, 
+                                                                         msyystring_buffer_size);
                                                  strcpy(msyystring_buffer, msyytext);
                                                  return(MS_REGEX);
                                                }
 
 <INITIAL>\(.*\)                     {
                                                  msyytext++;
-                                                 msyytext[strlen(msyytext)-1] = '\0';
-                                                 MS_LEXER_STRING_REALLOC(msyystring_buffer, strlen(msyytext), 
-                                                                         msyystring_buffer_size, msyystring_buffer_ptr);
+                                                 msyytext[msyyleng-1-1] = '\0';
+                                                 MS_LEXER_STRING_REALLOC(msyystring_buffer, msyyleng, 
+                                                                         msyystring_buffer_size);
                                                  strcpy(msyystring_buffer, msyytext);
                                                  return(MS_EXPRESSION);
                                                }
 
 <INITIAL>\{.*\}                     {
                                                  msyytext++;
-                                                 msyytext[strlen(msyytext)-1] = '\0';
-                                                 MS_LEXER_STRING_REALLOC(msyystring_buffer, strlen(msyytext), 
-                                                                         msyystring_buffer_size, msyystring_buffer_ptr);
+                                                 msyytext[msyyleng-1-1] = '\0';
+                                                 MS_LEXER_STRING_REALLOC(msyystring_buffer, msyyleng, 
+                                                                         msyystring_buffer_size);
                                                  strcpy(msyystring_buffer, msyytext);
                                                  return(MS_LIST);
                                                }
@@ -602,20 +632,15 @@ char path[MS_MAXPATHLEN];
                                                  msyystring_return_state = MS_STRING;
                                                  msyystring_begin = msyytext[0]; 
                                                  msyystring_size = 0;
-                                                 msyystring_buffer_ptr = msyystring_buffer;
+                                                 msyystring_buffer[0] = '\0';
                                                  BEGIN(MSSTRING);
                                               }
 
 <MSSTRING>\'|\"|\"i|\'i                       {
-                                                MS_LEXER_STRING_REALLOC(msyystring_buffer, msyystring_size, 
-                                                                                           msyystring_buffer_size, msyystring_buffer_ptr);
                                                 if (msyystring_begin == msyytext[0]) {
                                                    BEGIN(msyystring_begin_state);
-
-                                                   *msyystring_buffer_ptr = '\0';
-
                                                    if (msyystring_return_state == MS_STRING) {
-                                                      if (msyystring_icase && strlen(msyytext)==2) {
+                                                      if (msyystring_icase && msyyleng==2) {
                                                          msyystring_icase = MS_FALSE; // reset
                                                          return MS_ISTRING;
                                                       } else
@@ -625,50 +650,46 @@ char path[MS_MAXPATHLEN];
 
                                                 }
                                                 else {
-                                                  ++msyystring_size;
-                                                  *msyystring_buffer_ptr++ = *msyytext;
-                                                  if (strlen(msyytext)==2) {
-                                                      MS_LEXER_STRING_REALLOC(msyystring_buffer, msyystring_size, 
-                                                                              msyystring_buffer_size, msyystring_buffer_ptr);
-                                                     ++msyystring_size;
-                                                     *msyystring_buffer_ptr++ = msyytext[1];
+                                                  int old_size = msyystring_size;
+                                                  msyystring_size += (msyyleng==2) ? 2 : 1;
+                                                  MS_LEXER_STRING_REALLOC(msyystring_buffer, msyystring_size,
+                                                                          msyystring_buffer_size);
+                                                  msyystring_buffer[old_size] = *msyytext;
+                                                  if (msyyleng==2) {
+                                                     msyystring_buffer[old_size+1] = msyytext[1];
                                                   }
+                                                  msyystring_buffer[msyystring_size] = '\0';
                                                 }
                                               }
 
 <MSSTRING>\\\'|\\\"|\\\\|\\                  { 
-                                                MS_LEXER_STRING_REALLOC(msyystring_buffer, msyystring_size, 
-                                                                                           msyystring_buffer_size, msyystring_buffer_ptr);
-
                                                 ++msyystring_size;
-                                                if (strlen(msyytext) == 2)
-                                                    *msyystring_buffer_ptr++ = msyytext[1]; 
+                                                MS_LEXER_STRING_REALLOC(msyystring_buffer, msyystring_size,
+                                                                        msyystring_buffer_size);
+
+                                                if (msyyleng == 2)
+                                                    msyystring_buffer[msyystring_size-1] = msyytext[1]; 
                                                 else
-                                                    *msyystring_buffer_ptr++ = msyytext[0];
+                                                    msyystring_buffer[msyystring_size-1] = msyytext[0];
+                                                msyystring_buffer[msyystring_size] = '\0';
                                              }
 
 <MSSTRING>[^\\\'\\\"]+                       {
-                                                 char *yptr = msyytext;
-                                                 while ( *yptr ) { 
-                                                   MS_LEXER_STRING_REALLOC(msyystring_buffer, msyystring_size, 
-                                                                           msyystring_buffer_size, msyystring_buffer_ptr);
-                                                   ++msyystring_size;
-                                                   *msyystring_buffer_ptr++ = *yptr++;
-                                                 }
+                                                 int old_size = msyystring_size;
+                                                 msyystring_size += msyyleng;
+                                                 MS_LEXER_STRING_REALLOC(msyystring_buffer, msyystring_size,
+                                                                         msyystring_buffer_size);
+                                                 memcpy(msyystring_buffer + old_size, msyytext, msyyleng + 1);
                                              }
 
 <INCLUDE>\"[^\"]*\"|\'[^\']*\'                 {
                                                  msyytext++;
-                                                 msyytext[strlen(msyytext)-1] = '\0';
+                                                 msyytext[msyyleng-1-1] = '\0';
 
                                                  if(include_stack_ptr >= MAX_INCLUDE_DEPTH) {
                                                    msSetError(MS_IOERR, "Includes nested to deeply.", "msyylex()");
                                                    return(-1);
                                                  }
-
-                                                 include_stack[include_stack_ptr] = YY_CURRENT_BUFFER; /* save state */
-                                                 include_lineno[include_stack_ptr] = msyylineno;
-                                                 include_stack_ptr++;
 
                                                  msyyin = fopen(msBuildPath(path, msyybasepath, msyytext), "r");
                                                  if(!msyyin) {
@@ -676,6 +697,10 @@ char path[MS_MAXPATHLEN];
                                                    msyyin = YY_CURRENT_BUFFER->yy_input_file;
                                                    return(-1);
                                                  }
+
+                                                 include_stack[include_stack_ptr] = YY_CURRENT_BUFFER; /* save state */
+                                                 include_lineno[include_stack_ptr] = msyylineno;
+                                                 include_stack_ptr++;
 
                                                  msyy_switch_to_buffer( msyy_create_buffer(msyyin, YY_BUF_SIZE) );
                                                  msyylineno = 1;
@@ -687,13 +712,13 @@ char path[MS_MAXPATHLEN];
                                                  msyystring_return_state = MS_TOKEN_LITERAL_STRING;
                                                  msyystring_begin = msyytext[0]; 
                                                  msyystring_size = 0;
-                                                 msyystring_buffer_ptr = msyystring_buffer;
+                                                 msyystring_buffer[0] = '\0';
                                                  BEGIN(MSSTRING);
                                               }
 
 <INITIAL,CONFIG_FILE>[a-z/\.][a-z0-9/\._\-\=]*   { 
-                                                    MS_LEXER_STRING_REALLOC(msyystring_buffer, strlen(msyytext), 
-                                                                            msyystring_buffer_size, msyystring_buffer_ptr);
+                                                    MS_LEXER_STRING_REALLOC(msyystring_buffer, msyyleng, 
+                                                                            msyystring_buffer_size);
                                                     strcpy(msyystring_buffer, msyytext); 
                                                     return(MS_STRING); 
                                                 }
@@ -716,8 +741,8 @@ char path[MS_MAXPATHLEN];
 }
 
 <INITIAL,CONFIG_FILE>.                          { 
-                                                  MS_LEXER_STRING_REALLOC(msyystring_buffer, strlen(msyytext), 
-                                                                          msyystring_buffer_size, msyystring_buffer_ptr);
+                                                  MS_LEXER_STRING_REALLOC(msyystring_buffer, msyyleng, 
+                                                                          msyystring_buffer_size);
                                                   strcpy(msyystring_buffer, msyytext); 
                                                   return(0); 
                                                 }

@@ -234,6 +234,7 @@ extern "C" {
 #else
 #define MS_DEFAULT_MAPFILE_PATTERN "\\.map$"
 #endif
+#define MS_DEFAULT_CONTEXTFILE_PATTERN "\\.[Xx][Mm][Ll]$"
 #define MS_TEMPLATE_MAGIC_STRING "MapServer Template"
 #define MS_TEMPLATE_EXPR "\\.(xml|wml|html|htm|svg|kml|gml|js|tmpl)$"
 
@@ -2094,7 +2095,7 @@ void msPopulateTextSymbolForLabelAndString(textSymbolObj *ts, labelObj *l, char 
   /**
   Sets up string-based mapfile loading and calls loadMapInternal to do the work
   */
-  MS_DLL_EXPORT mapObj *msLoadMapFromString(char *buffer, char *new_mappath);
+  MS_DLL_EXPORT mapObj *msLoadMapFromString(char *buffer, char *new_mappath, const configObj* config);
 
   /* Function prototypes, not wrapable */
 
@@ -2186,6 +2187,7 @@ void msPopulateTextSymbolForLabelAndString(textSymbolObj *ts, labelObj *l, char 
                                         int default_result );
   MS_DLL_EXPORT void msApplyMapConfigOptions( mapObj *map );
   MS_DLL_EXPORT int msMapComputeGeotransform( mapObj *map );
+  int msMapComputeGeotransformEx( mapObj * map, double resolutionX, double resolutionY );
 
   MS_DLL_EXPORT void msMapPixelToGeoref( mapObj *map, double *x, double *y );
   MS_DLL_EXPORT void msMapGeorefToPixel( mapObj *map, double *x, double *y );

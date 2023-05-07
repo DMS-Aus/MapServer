@@ -132,7 +132,7 @@ errorObj *msGetErrorObj()
   /* We don't have one ... initialize one. */
   else if( link == NULL || link->next == NULL ) {
     te_info_t *new_link;
-    errorObj   error_obj = { MS_NOERR, "", "", 0, 0, NULL };
+    errorObj   error_obj = { MS_NOERR, "", "", 0, 0, NULL, 0 };
 
     new_link = (te_info_t *) malloc(sizeof(te_info_t));
     new_link->next = error_list;
@@ -180,7 +180,7 @@ static errorObj *msInsertErrorObj(void)
   errorObj *ms_error;
   ms_error = msGetErrorObj();
 
-  if (ms_error->code != MS_NOERR) {
+  if (ms_error->code != MS_NOERR && ms_error->totalerrorcount < 100) {
     /* Head of the list already in use, insert a new errorObj after the head
      * and move head contents to this new errorObj, freeing the errorObj
      * for reuse.
@@ -207,6 +207,7 @@ static errorObj *msInsertErrorObj(void)
       ms_error->message[0] = '\0';
       ms_error->errorcount = 0;
     }
+    ms_error->totalerrorcount ++;
   }
 
   return ms_error;
@@ -236,6 +237,7 @@ void msResetErrorList()
   ms_error->routine[0] = '\0';
   ms_error->message[0] = '\0';
   ms_error->errorcount = 0;
+  ms_error->totalerrorcount = 0;
 
   /* -------------------------------------------------------------------- */
   /*      Cleanup our entry in the thread list.  This is mainly           */
@@ -327,6 +329,30 @@ char *msGetErrorString(const char *delimiter)
   return(errstr);
 }
 
+void msRedactString(char* str, const char* keyword, const char delimeter)
+{
+
+    char* password = strstr(str, keyword);
+    if (password != NULL) {
+        char* ptr = password + strlen(keyword);
+        while (*ptr != '\0' && *ptr != delimeter) {
+            *ptr = '*';
+            ptr++;
+        }
+    }
+}
+
+void msRedactCredentials(char* str)
+{
+
+  // postgres formats
+  msRedactString(str, "password=", ' ');
+  // mssql use semi-colons as delimeters for parameters
+  msRedactString(str, "password=", ';');
+  // ODBC connections can use pwd rather than password
+  msRedactString(str, "pwd=", ';');
+}
+
 void msSetError(int code, const char *message_fmt, const char *routine, ...)
 {
   errorObj *ms_error;
@@ -358,6 +384,8 @@ void msSetError(int code, const char *message_fmt, const char *routine, ...)
   }
   else
       ++ms_error->errorcount;
+
+  msRedactCredentials(ms_error->message);
 
   /* Log a copy of errors to MS_ERRORFILE if set (handled automatically inside msDebug()) */
   msDebug("%s: %s %s\n", ms_error->routine, ms_errorCodes[ms_error->code], ms_error->message);
@@ -516,11 +544,18 @@ void msWriteErrorImage(mapObj *map, char *filename, int blank)
 
 char *msGetVersion()
 {
-  static char version[1024];
-
-  if(CPLGetConfigOption("MS_NO_VERSION", NULL) != NULL) return ""; // supressing version information
+  static char version[2048];
 
   sprintf(version, "MapServer version %s", MS_VERSION);
+
+  // add versions of required dependencies
+  static char PROJVersion[20];
+  sprintf(PROJVersion, " PROJ version %d.%d", PROJ_VERSION_MAJOR, PROJ_VERSION_MINOR);
+  strcat(version, PROJVersion);
+
+  static char GDALVersion[20];
+  sprintf(GDALVersion, " GDAL version %d.%d", GDAL_VERSION_MAJOR, GDAL_VERSION_MINOR);
+  strcat(version, GDALVersion);
 
 #if (defined USE_PNG)
   strcat(version, " OUTPUT=PNG");

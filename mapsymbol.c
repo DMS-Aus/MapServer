@@ -231,8 +231,10 @@ int loadSymbol(symbolObj *s, char *symbolpath)
           msSetError(MS_TYPEERR, "Parsing error near (%s):(line %d)", "loadSymbol()", msyystring_buffer, msyylineno);
           return(-1);
         }
+        msFree(s->full_pixmap_path);
         s->full_pixmap_path = msStrdup(msBuildPath(szPath, symbolpath, msyystring_buffer));
         /* Set imagepath */
+        msFree(s->imagepath);
         s->imagepath = msStrdup(msyystring_buffer);
         break;
       case(NAME):
@@ -248,6 +250,10 @@ int loadSymbol(symbolObj *s, char *symbolpath)
               done = MS_TRUE;
               break;
             case(MS_NUMBER):
+              if(s->numpoints == MS_MAXVECTORPOINTS) {
+                msSetError(MS_SYMERR, "POINT block contains too many points.", "loadSymbol()");
+		return(-1);
+	      }
               s->points[s->numpoints].x = atof(msyystring_buffer); /* grab the x */
               if(getDouble(&(s->points[s->numpoints].y), MS_NUM_CHECK_NONE, -1, -1) == -1) return(-1); /* grab the y */
               if(s->points[s->numpoints].x!=-99) {
@@ -592,7 +598,8 @@ int loadSymbolSet(symbolSetObj *symbolset, mapObj *map)
 
     if(!foundSymbolSetToken && token != SYMBOLSET) {
       msSetError(MS_IDENTERR, "First token must be SYMBOLSET, this doesn't look like a symbol file.", "msLoadSymbolSet()");
-      return(-1);
+      status = -1;
+      break;
     }
 
     switch(token) {

@@ -53,8 +53,14 @@
 
   mapObj(char *mapText, int isMapText /*used as signature only to differentiate this constructor from default constructor*/ ) 
   {
-      return msLoadMapFromString(mapText, NULL);
+      return msLoadMapFromString(mapText, NULL, NULL);
   }
+
+  mapObj(char *mapText, int isMapText, configObj *config) 
+  {
+      return msLoadMapFromString(mapText, NULL, config);
+  }
+
 #endif 
     
     ~mapObj() 
@@ -68,11 +74,11 @@
 #else
     %newobject clone;
     /**
-    Returns a independent copy of the map, less any caches.
+    Return an independent copy of the map, less any caches.
 
     .. note::
 
-        In the Java module this method is named ``cloneMap``.
+        In the Java & PHP modules this method is named ``cloneMap``.
     */
     mapObj *clone() 
 #endif

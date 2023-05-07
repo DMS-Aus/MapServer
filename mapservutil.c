@@ -60,14 +60,11 @@ void msCGIWriteError(mapservObj *mapserv)
     return;
   }
 
-  const char *version = msGetVersion();
-
   if(!mapserv || !mapserv->map) {
     msIO_setHeader("Content-Type","text/html");
     msIO_sendHeaders();
     msIO_printf("<HTML>\n");
     msIO_printf("<HEAD><TITLE>MapServer Message</TITLE></HEAD>\n");
-    if(version[0] != '\0') msIO_printf("<!-- %s -->\n", version);
     msIO_printf("<BODY BGCOLOR=\"#FFFFFF\">\n");
     msWriteErrorXML(stdout);
     msIO_printf("</BODY></HTML>");
@@ -81,7 +78,6 @@ void msCGIWriteError(mapservObj *mapserv)
       msIO_sendHeaders();
       msIO_printf("<HTML>\n");
       msIO_printf("<HEAD><TITLE>MapServer Message</TITLE></HEAD>\n");
-      if(version[0] != '\0') msIO_printf("<!-- %s -->\n", version);
       msIO_printf("<BODY BGCOLOR=\"#FFFFFF\">\n");
       msWriteErrorXML(stdout);
       msIO_printf("</BODY></HTML>");
@@ -94,7 +90,6 @@ void msCGIWriteError(mapservObj *mapserv)
         msIO_sendHeaders();
         msIO_printf("<HTML>\n");
         msIO_printf("<HEAD><TITLE>MapServer Message</TITLE></HEAD>\n");
-        if(version[0] != '\0') msIO_printf("<!-- %s -->\n", version);
         msIO_printf("<BODY BGCOLOR=\"#FFFFFF\">\n");
         msWriteErrorXML(stdout);
         msIO_printf("</BODY></HTML>");
@@ -104,7 +99,6 @@ void msCGIWriteError(mapservObj *mapserv)
       msIO_sendHeaders();
       msIO_printf("<HTML>\n");
       msIO_printf("<HEAD><TITLE>MapServer Message</TITLE></HEAD>\n");
-      if(version[0] != '\0') msIO_printf("<!-- %s -->\n", version);
       msIO_printf("<BODY BGCOLOR=\"#FFFFFF\">\n");
       msWriteErrorXML(stdout);
       msIO_printf("</BODY></HTML>");
@@ -247,8 +241,30 @@ mapObj *msCGILoadMap(mapservObj *mapserv, configObj *config)
           if(strncasecmp(mapserv->request->ParamValues[i],"http",4) == 0) {
             if(msGetConfigOption(map, "CGI_CONTEXT_URL"))
               msLoadMapContextURL(map, mapserv->request->ParamValues[i], MS_FALSE);
-          } else
-            msLoadMapContext(map, mapserv->request->ParamValues[i], MS_FALSE);
+          } else {
+            const char *map_context_filename = mapserv->request->ParamValues[i];
+            const char *ms_context_pattern = CPLGetConfigOption("MS_CONTEXT_PATTERN", NULL);
+            const char *ms_context_bad_pattern = CPLGetConfigOption("MS_CONTEXT_BAD_PATTERN", NULL);
+            if(ms_context_bad_pattern == NULL) ms_context_bad_pattern = ms_map_bad_pattern_default;
+
+            if(ms_context_pattern == NULL) { // can't go any further, bail
+              msSetError(MS_WEBERR, "Required configuration value MS_CONTEXT_PATTERN not set.", "msCGILoadMap()");
+              msFreeMap(map);
+              return NULL;
+            }
+            if(msIsValidRegex(ms_context_bad_pattern) == MS_FALSE ||
+               msEvalRegex(ms_context_bad_pattern, map_context_filename) == MS_TRUE) {
+              msSetError(MS_WEBERR, "CGI variable \"context\" fails to validate.", "msCGILoadMap()");
+              msFreeMap(map);
+              return NULL;
+            }
+            if(msEvalRegex(ms_context_pattern, map_context_filename) != MS_TRUE) {
+              msSetError(MS_WEBERR, "CGI variable \"context\" fails to validate.", "msCGILoadMap()");
+              msFreeMap(map);
+              return NULL;
+            }
+            msLoadMapContext(map, map_context_filename, MS_FALSE);
+          }
         }
       }
     }
@@ -1020,7 +1036,9 @@ int msCGILoadForm(mapservObj *mapserv)
       continue;
     }
 
-    if(strcasecmp(mapserv->request->ParamNames[i],"mapsize") == 0) { /* size of new map (pixels) */
+    /* size of new map (pixels), map.size/map_size are included for backwards compatibility and may be removed in future release */
+    if(strcasecmp(mapserv->request->ParamNames[i],"mapsize") == 0 ||
+       strcasecmp(mapserv->request->ParamNames[i],"map.size") == 0 || strcasecmp(mapserv->request->ParamNames[i],"map_size") == 0) {
       tokens = msStringSplit(mapserv->request->ParamValues[i], ' ', &n);
 
       if(!tokens) {

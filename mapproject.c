@@ -37,6 +37,7 @@
 #include "mapaxisorder.h"
 
 #include "cpl_conv.h"
+#include "cpl_string.h"
 #include "ogr_srs_api.h"
 
 static char *ms_proj_data = NULL;
@@ -725,6 +726,7 @@ static int _msProcessAutoProjection(projectionObj *p)
                "WMS/WFS AUTO/AUTO2 PROJECTION must be in the format "
                "'AUTO:proj_id,units_id,lon0,lat0' or 'AUTO2:crs_id,factor,lon0,lat0'(got '%s').\n",
                "_msProcessAutoProjection()", p->args[0]);
+    msFreeCharArray(args, numargs);
     return -1;
   }
 
@@ -818,6 +820,7 @@ static int _msProcessAutoProjection(projectionObj *p)
     int l_pj_errno = proj_context_errno (p->proj_ctx->proj_ctx);
     msSetError(MS_PROJERR, "proj error \"%s\" for \"%s\"",
                "msProcessProjection()", proj_errno_string(l_pj_errno), szProjBuf) ;
+    msFreeCharArray(args, numargs);
     return(-1);
   }
 #else
@@ -827,6 +830,7 @@ static int _msProcessAutoProjection(projectionObj *p)
     msReleaseLock( TLOCK_PROJ );
     msSetError(MS_PROJERR, "proj error \"%s\" for \"%s\"",
                "msProcessProjection()", pj_strerrno(*pj_errno_ref), szProjBuf) ;
+    msFreeCharArray(args, numargs);
     return(-1);
   }
   msReleaseLock( TLOCK_PROJ );
@@ -870,8 +874,23 @@ int msProcessProjection(projectionObj *p)
     msAcquireLock( TLOCK_PROJ );
     p->proj_ctx->ms_proj_data_change_counter = ms_proj_data_change_counter;
     {
-        const char* const paths[1] = { ms_proj_data };
-        proj_context_set_search_paths(p->proj_ctx->proj_ctx, 1, ms_proj_data ? paths : NULL);
+        if( ms_proj_data )
+        {
+            int num_tokens = 0;
+#ifdef _WIN32
+            char sep = ';';
+#else
+            char sep = ':';
+#endif
+            char** paths = msStringSplit(ms_proj_data, sep, &num_tokens);
+            proj_context_set_search_paths(p->proj_ctx->proj_ctx, num_tokens,
+                                          (const char* const*)paths);
+            msFreeCharArray(paths, num_tokens);
+        }
+        else
+        {
+            proj_context_set_search_paths(p->proj_ctx->proj_ctx, 0, NULL);
+        }
     }
     msReleaseLock( TLOCK_PROJ );
   }
@@ -979,6 +998,8 @@ int msProcessProjection(projectionObj *p)
 /************************************************************************/
 int msIsAxisInverted(int epsg_code)
 {
+  if( epsg_code < 0 )
+    return MS_FALSE;
   const unsigned int row = epsg_code / 8;
   const unsigned char index = epsg_code % 8;
 
@@ -1699,21 +1720,30 @@ int msProjectShapeEx(reprojectionObj* reprojector, shapeObj *shape)
 #undef p_y
 #endif
 
-  for( i = shape->numlines-1; i >= 0; i-- ) {
-    if( shape->type == MS_SHAPE_LINE || shape->type == MS_SHAPE_POLYGON ) {
-      if( msProjectShapeLine( reprojector, shape, i ) == MS_FAILURE )
-        msShapeDeleteLine( shape, i );
-    } else if( msProjectLineEx(reprojector, shape->line+i ) == MS_FAILURE ) {
-      msShapeDeleteLine( shape, i );
-    }
-  }
-
-  if( shape->numlines == 0 ) {
-    msFreeShape( shape );
-    return MS_FAILURE;
+  if (shape->numlines == 0) {
+      // don't attempt to project any NULL geometries
+      // but if we want to return the record's attributes we won't free the shape
+      // and throw an error
+      shape->type = MS_SHAPE_NULL;
+      return MS_SUCCESS;
   } else {
-    msComputeBounds( shape ); /* fixes bug 1586 */
-    return(MS_SUCCESS);
+    for( i = shape->numlines-1; i >= 0; i-- ) {
+      if( shape->type == MS_SHAPE_LINE || shape->type == MS_SHAPE_POLYGON ) {
+        if( msProjectShapeLine( reprojector, shape, i ) == MS_FAILURE )
+          msShapeDeleteLine( shape, i );
+      } else if( msProjectLineEx(reprojector, shape->line+i ) == MS_FAILURE ) {
+        msShapeDeleteLine( shape, i );
+      }
+    }
+
+    if ( shape->numlines == 0 ) {
+        msFreeShape(shape);
+        return MS_FAILURE;
+    }
+    else {
+        msComputeBounds(shape); /* fixes bug 1586 */
+        return(MS_SUCCESS);
+    }
   }
 }
 
@@ -2609,8 +2639,14 @@ void msSetPROJ_DATA( const char *proj_data, const char *pszRelToPath )
 #if GDAL_VERSION_MAJOR >= 3
   if( ms_proj_data != NULL )
   {
-    const char* const apszPaths[] = { ms_proj_data, NULL };
-    OSRSetPROJSearchPaths(apszPaths);
+#ifdef _WIN32
+    const char* sep = ";";
+#else
+    const char* sep = ":";
+#endif
+    char** papszPaths = CSLTokenizeString2(ms_proj_data, sep, 0);
+    OSRSetPROJSearchPaths((const char* const *)papszPaths);
+    CSLDestroy(papszPaths);
   }
 #endif
 

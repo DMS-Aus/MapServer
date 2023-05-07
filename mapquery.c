@@ -177,9 +177,11 @@ static int canCacheShape(mapObj* map, queryCacheObj *queryCache, int shape_ram_s
       if( !queryCache->cachedShapeCountWarningEmitted )
       {
           queryCache->cachedShapeCountWarningEmitted = MS_TRUE;
-          msDebug("map->query.max_cached_shape_count = %d reached. "
+          if (map->debug >= MS_DEBUGLEVEL_V) {
+              msDebug("map->query.max_cached_shape_count = %d reached. "
                   "Next features will not be cached.\n",
                   map->query.max_cached_shape_count);
+          }
       }
       return MS_FALSE;
   }
@@ -190,10 +192,12 @@ static int canCacheShape(mapObj* map, queryCacheObj *queryCache, int shape_ram_s
       if( !queryCache->cachedShapeRAMWarningEmitted )
       {
           queryCache->cachedShapeRAMWarningEmitted = MS_TRUE;
-          msDebug("map->query.max_cached_shape_ram_amount = %d reached after %d cached features. "
+          if (map->debug >= MS_DEBUGLEVEL_V) {
+              msDebug("map->query.max_cached_shape_ram_amount = %d reached after %d cached features. "
                   "Next features will not be cached.\n",
                   map->query.max_cached_shape_ram_amount,
                   queryCache->cachedShapeCount);
+          }
       }
       return MS_FALSE;
   }
@@ -1244,7 +1248,10 @@ int msQueryByRect(mapObj *map)
               break;
             }
         }
-        msProjectShapeEx(reprojector, &shape);
+        if( msProjectShapeEx(reprojector, &shape) != MS_SUCCESS ) {
+            // msProjectShapeEx() calls msFreeShape() on error
+            continue;
+        }
       }
 
       if(msRectContained(&shape.bounds, &searchrectInMapProj) == MS_TRUE) { /* if the whole shape is in, don't intersect */
@@ -1260,6 +1267,9 @@ int msQueryByRect(mapObj *map)
           case MS_SHAPE_POLYGON:
             status = msIntersectPolygons(&shape, &searchshape);
             break;
+          case MS_SHAPE_NULL:
+              status = MS_TRUE;
+              break;
           default:
             break;
         }

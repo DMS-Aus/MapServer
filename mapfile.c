@@ -373,6 +373,7 @@ int msBuildPluginLibraryPath(char **dest, const char *lib_str, mapObj *map)
   if (NULL == msBuildPath(szLibPath, plugin_dir, lib_str)) {
     return MS_FAILURE;
   }
+  msFree(*dest);
   *dest = msStrdup(szLibPath);
 
   return MS_SUCCESS;
@@ -469,6 +470,7 @@ int loadColor(colorObj *color, attributeBindingObj *binding)
     }
   } else {
     assert(binding);
+    msFree(binding->item);
     binding->item = msStrdup(msyystring_buffer);
     binding->index = -1;
   }
@@ -915,6 +917,7 @@ void freeFeatureList(featureListNodeObjPtr list)
 /* lineObj = multipointObj */
 static int loadFeaturePoints(lineObj *points)
 {
+  int ret = -1;
   int buffer_size=0;
 
   points->point = (pointObj *)malloc(sizeof(pointObj)*MS_FEATUREINITSIZE);
@@ -922,30 +925,48 @@ static int loadFeaturePoints(lineObj *points)
   points->numpoints = 0;
   buffer_size = MS_FEATUREINITSIZE;
 
-  for(;;) {
+  while( ret < 0 ) {
     switch(msyylex()) {
       case(EOF):
         msSetError(MS_EOFERR, NULL, "loadFeaturePoints()");
-        return(MS_FAILURE);
+        ret = MS_FAILURE;
+        break;
       case(END):
-        return(MS_SUCCESS);
+        ret = MS_SUCCESS;
+        break;
       case(MS_NUMBER):
         if(points->numpoints == buffer_size) { /* just add it to the end */
-          points->point = (pointObj *) realloc(points->point, sizeof(pointObj)*(buffer_size+MS_FEATUREINCREMENT));
-          MS_CHECK_ALLOC(points->point, sizeof(pointObj)*(buffer_size+MS_FEATUREINCREMENT), MS_FAILURE);
+          pointObj* newPoints = (pointObj *) realloc(points->point, sizeof(pointObj)*(buffer_size+MS_FEATUREINCREMENT));
+          if( newPoints == NULL ) {
+            msSetError(MS_MEMERR, "%s: %d: Out of memory allocating %u bytes.\n", __FUNCTION__,
+                       __FILE__, __LINE__, (unsigned int)(sizeof(pointObj)*(buffer_size+MS_FEATUREINCREMENT)));
+            ret = MS_FAILURE;
+            break;
+          }
+          points->point = newPoints;
           buffer_size+=MS_FEATUREINCREMENT;
         }
 
         points->point[points->numpoints].x = atof(msyystring_buffer);
-        if(getDouble(&(points->point[points->numpoints].y), MS_NUM_CHECK_NONE, -1, -1) == -1) return(MS_FAILURE);
-
+        if(getDouble(&(points->point[points->numpoints].y), MS_NUM_CHECK_NONE, -1, -1) == -1) {
+          ret = MS_FAILURE;
+          break;
+        }
         points->numpoints++;
         break;
       default:
         msSetError(MS_IDENTERR, "Parsing error near (%s):(line %d)", "loadFeaturePoints()",  msyystring_buffer, msyylineno );
-        return(MS_FAILURE);
+        ret = MS_FAILURE;
+        break;
     }
   }
+
+  if( ret == MS_FAILURE ) {
+    msFree(points->point); /* clean up */
+    points->point = NULL;
+    points->numpoints = 0;
+  }
+  return ret;
 }
 
 static int loadFeature(layerObj *player, int type)
@@ -1109,8 +1130,10 @@ static int loadGrid( layerObj *pLayer )
         break; /* for string loads */
       case( LABELFORMAT ):
         if(getString(&(pLayer->grid->labelformat)) == MS_FAILURE) {
-          if(strcasecmp(msyystring_buffer, "DD") == 0) /* DD triggers a symbol to be returned instead of a string so check for this special case */
+          if(strcasecmp(msyystring_buffer, "DD") == 0) /* DD triggers a symbol to be returned instead of a string so check for this special case */ {
+            msFree(pLayer->grid->labelformat);
             pLayer->grid->labelformat = msStrdup("DD");
+          }
           else
             return(-1);
         }
@@ -1164,11 +1187,9 @@ static void writeGrid(FILE *stream, int indent, graticuleObj *pGraticule)
 
 static int loadProjection(projectionObj *p)
 {
-  int i=0;
-
   p->gt.need_geotransform = MS_FALSE;
 
-  if ( p->proj != NULL ) {
+  if ( p->proj != NULL || p->numargs != 0 ) {
     msSetError(MS_MISCERR, "Projection is already initialized. Multiple projection definitions are not allowed in this object. (line %d)",
                "loadProjection()", msyylineno);
     return(-1);
@@ -1180,16 +1201,16 @@ static int loadProjection(projectionObj *p)
         msSetError(MS_EOFERR, NULL, "loadProjection()");
         return(-1);
       case(END):
-        if( i == 1 && strstr(p->args[0],"+") != NULL ) {
+        if( p->numargs == 1 && strstr(p->args[0],"+") != NULL ) {
           char *one_line_def = p->args[0];
           int result;
 
           p->args[0] = NULL;
+          p->numargs = 0;
           result = msLoadProjectionString( p, one_line_def );
           free( one_line_def );
           return result;
         } else {
-          p->numargs = i;
           if(p->numargs != 0)
             return msProcessProjection(p);
           else
@@ -1198,9 +1219,14 @@ static int loadProjection(projectionObj *p)
         break;
       case(MS_STRING):
       case(MS_AUTO):
-        p->args[i] = msStrdup(msyystring_buffer);
+        if( p->numargs == MS_MAXPROJARGS ) {
+            msSetError(MS_MISCERR, "Parsing error near (%s):(line %d): Too many arguments in projection string", "loadProjection()",
+                   msyystring_buffer, msyylineno);
+            return -1;
+        }
+        p->args[p->numargs] = msStrdup(msyystring_buffer);
         p->automatic = MS_TRUE;
-        i++;
+        p->numargs++;
         break;
       default:
         msSetError(MS_IDENTERR, "Parsing error near (%s):(line %d)", "loadProjection()",
@@ -1488,7 +1514,9 @@ int freeLabelLeader(labelLeaderObj *leader)
 {
   int i;
   for(i=0; i<leader->numstyles; i++) {
-    msFree(leader->styles[i]);
+    if(freeStyle(leader->styles[i]) == MS_SUCCESS) {
+      msFree(leader->styles[i]);
+    }
   }
   msFree(leader->styles);
 
@@ -1551,7 +1579,13 @@ static int loadLeader(labelLeaderObj *leader)
         if(msGrowLeaderStyles(leader) == NULL)
           return(-1);
         initStyle(leader->styles[leader->numstyles]);
-        if(loadStyle(leader->styles[leader->numstyles]) != MS_SUCCESS) return(-1);
+        if(loadStyle(leader->styles[leader->numstyles]) != MS_SUCCESS)
+        {
+            freeStyle(leader->styles[leader->numstyles]);
+            free(leader->styles[leader->numstyles]);
+            leader->styles[leader->numstyles] = NULL;
+            return -1;
+        }
         leader->numstyles++;
         break;
       default:
@@ -1620,7 +1654,6 @@ static int loadLabel(labelObj *label)
         break;
       case(EOF):
         msSetError(MS_EOFERR, NULL, "loadLabel()");
-        freeLabel(label);       /* free any structures allocated before EOF */
         return(-1);
       case(EXPRESSION):
         if(loadExpression(&(label->expression)) == -1) return(-1); /* loadExpression() cleans up previously allocated expression */
@@ -1811,7 +1844,12 @@ static int loadLabel(labelObj *label)
         if(msGrowLabelStyles(label) == NULL)
           return(-1);
         initStyle(label->styles[label->numstyles]);
-        if(loadStyle(label->styles[label->numstyles]) != MS_SUCCESS) return(-1);
+        if(loadStyle(label->styles[label->numstyles]) != MS_SUCCESS) {
+            freeStyle(label->styles[label->numstyles]);
+            free(label->styles[label->numstyles]);
+            label->styles[label->numstyles] = NULL;
+            return(-1);
+        }
         if(label->styles[label->numstyles]->_geomtransform.type == MS_GEOMTRANSFORM_NONE)
           label->styles[label->numstyles]->_geomtransform.type = MS_GEOMTRANSFORM_LABELPOINT; /* set a default, a marker? */
         label->numstyles++;
@@ -2182,7 +2220,6 @@ static void writeExpression(FILE *stream, int indent, const char *name, expressi
 
 int loadHashTable(hashTableObj *ptable)
 {
-  char *key=NULL, *data=NULL;
   assert(ptable);
 
   for(;;) {
@@ -2193,14 +2230,19 @@ int loadHashTable(hashTableObj *ptable)
       case(END):
         return(MS_SUCCESS);
       case(MS_STRING):
-        key = msStrdup(msyystring_buffer); /* the key is *always* a string */
-        if(getString(&data) == MS_FAILURE) return(MS_FAILURE);
+      {
+        char* data = NULL;
+        char* key = msStrdup(msyystring_buffer); /* the key is *always* a string */
+        if(getString(&data) == MS_FAILURE) {
+          free(key);
+          return(MS_FAILURE);
+        }
         msInsertHashTable(ptable, key, data);
 
         free(key);
         free(data);
-        data=NULL;
         break;
+      }
       default:
         msSetError(MS_IDENTERR, "Parsing error near (%s):(line %d)", "loadHashTable()", msyystring_buffer, msyylineno );
         return(MS_FAILURE);
@@ -2857,8 +2899,9 @@ void writeStyle(FILE *stream, int indent, styleObj *style)
     writeAttributeBinding(stream, indent, "WIDTH", &(style->bindings[MS_STYLE_BINDING_WIDTH]));
   else writeNumber(stream, indent, "WIDTH", 1, style->width);
 
-  if(style->rangeitem) {
-    writeString(stream, indent, "RANGEITEM", NULL, style->rangeitem);
+  writeString(stream, indent, "RANGEITEM", NULL, style->rangeitem);
+  /* If COLORRANGE is valid, assume DATARANGE also needs to be written */
+  if(MS_VALID_COLOR(style->mincolor) && MS_VALID_COLOR(style->maxcolor)) {
     writeColorRange(stream, indent, "COLORRANGE", &(style->mincolor), &(style->maxcolor));
     writeDoubleRange(stream, indent, "DATARANGE", style->minvalue, style->maxvalue);
   }
@@ -3107,6 +3150,9 @@ int msMaybeAllocateClassStyle(classObj* c, int idx)
     if ( initStyle(c->styles[c->numstyles]) == MS_FAILURE ) {
       msSetError(MS_MISCERR, "Failed to init new styleObj",
                  "msMaybeAllocateClassStyle()");
+      freeStyle(c->styles[c->numstyles]);
+      free(c->styles[c->numstyles]);
+      c->styles[c->numstyles] = NULL;
       return(MS_FAILURE);
     }
     c->numstyles++;
@@ -3223,7 +3269,9 @@ int loadClass(classObj *class, layerObj *layer)
         initLabel(class->labels[class->numlabels]);
         class->labels[class->numlabels]->size = MS_MEDIUM; /* only set a default if the LABEL section is present */
         if(loadLabel(class->labels[class->numlabels]) == -1) {
-          msFree(class->labels[class->numlabels]);
+          freeLabel(class->labels[class->numlabels]);
+          free(class->labels[class->numlabels]);
+          class->labels[class->numlabels] = NULL;
           return(-1);
         }
         class->numlabels++;
@@ -3259,7 +3307,12 @@ int loadClass(classObj *class, layerObj *layer)
         if(msGrowClassStyles(class) == NULL)
           return(-1);
         initStyle(class->styles[class->numstyles]);
-        if(loadStyle(class->styles[class->numstyles]) != MS_SUCCESS) return(-1);
+        if(loadStyle(class->styles[class->numstyles]) != MS_SUCCESS) {
+            freeStyle(class->styles[class->numstyles]);
+            free(class->styles[class->numstyles]);
+            class->styles[class->numstyles] = NULL;
+            return(-1);
+        }
         class->numstyles++;
         break;
       case(TEMPLATE):
@@ -3913,11 +3966,6 @@ int loadLayerCompositer(LayerCompositer *compositer) {
         else {
           msSetError(MS_PARSEERR,"Unknown COMPOP \"%s\"", "loadLayerCompositer()", compop);
           free(compop);
-          if (compositer->filter) {
-            msFree(compositer->filter->filter);
-            msFree(compositer->filter);
-            compositer->filter=NULL;
-            }
           return MS_FAILURE;
         }
         free(compop);
@@ -3927,21 +3975,11 @@ int loadLayerCompositer(LayerCompositer *compositer) {
         return MS_SUCCESS;
       case OPACITY:
         if (getInteger(&(compositer->opacity), MS_NUM_CHECK_RANGE, 0, 100) == -1) {
-          if (compositer->filter) {
-            msFree(compositer->filter->filter);
-            msFree(compositer->filter);
-            compositer->filter=NULL;
-          }
           msSetError(MS_PARSEERR,"OPACITY must be between 0 and 100 (line %d)","loadLayerCompositer()",msyylineno);
           return MS_FAILURE;
         }
         break;
       default:
-        if (compositer->filter) {
-          msFree(compositer->filter->filter);
-          msFree(compositer->filter);
-          compositer->filter=NULL;
-          }
         msSetError(MS_IDENTERR, "Parsing error 2 near (%s):(line %d)", "loadLayerCompositer()",  msyystring_buffer, msyylineno );
         return(MS_FAILURE);
     }
@@ -3962,11 +4000,16 @@ int loadLayer(layerObj *layer, mapObj *map)
         if (msGrowLayerClasses(layer) == NULL)
           return(-1);
         initClass(layer->class[layer->numclasses]);
-        if(loadClass(layer->class[layer->numclasses], layer) == -1) return(-1);
+        if(loadClass(layer->class[layer->numclasses], layer) == -1)
+        {
+            freeClass(layer->class[layer->numclasses]);
+            free(layer->class[layer->numclasses]);
+            layer->class[layer->numclasses] = NULL;
+            return(-1);
+        }
         layer->numclasses++;
         break;
       case(CLUSTER):
-        initCluster(&layer->cluster);
         if(loadCluster(&layer->cluster) == -1) return(-1);
         break;
       case(CLASSGROUP):
@@ -3979,7 +4022,7 @@ int loadLayer(layerObj *layer, mapObj *map)
         LayerCompositer *compositer = msSmallMalloc(sizeof(LayerCompositer));
         initLayerCompositer(compositer);
         if(MS_FAILURE == loadLayerCompositer(compositer)) {
-          msFree(compositer);
+          freeLayerCompositer(compositer);
           return -1;
           }
         if(!layer->compositer) {
@@ -4096,7 +4139,10 @@ int loadLayer(layerObj *layer, mapObj *map)
           return(-1);
         }
 
-        if(loadJoin(&(layer->joins[layer->numjoins])) == -1) return(-1);
+        if(loadJoin(&(layer->joins[layer->numjoins])) == -1) {
+            freeJoin(&(layer->joins[layer->numjoins]));
+            return(-1);
+        }
         layer->numjoins++;
         break;
       case(LABELCACHE):
@@ -4164,9 +4210,10 @@ int loadLayer(layerObj *layer, mapObj *map)
           plugin_library = msConfigGetPlugin(map->config, value);
           msFree(value);
           if(!plugin_library) {
-            msSetError(MS_MISCERR, "Plugin value not found in config file. See mapserver.org/config_file.html for more information." , "loadLayer()");
+            msSetError(MS_MISCERR, "Plugin value not found in config file. See mapserver.org/mapfile/config.html for more information." , "loadLayer()");
             return(-1);
           }
+          msFree(layer->plugin_library_original);
           layer->plugin_library_original = strdup(plugin_library);
         } else {
           if(getString(&layer->plugin_library_original) == MS_FAILURE) return(-1);
@@ -4202,7 +4249,10 @@ int loadLayer(layerObj *layer, mapObj *map)
         if (msGrowLayerScaletokens(layer) == NULL)
           return(-1);
         initScaleToken(&layer->scaletokens[layer->numscaletokens]);
-        if(loadScaletoken(&layer->scaletokens[layer->numscaletokens], layer) == -1) return(-1);
+        if(loadScaletoken(&layer->scaletokens[layer->numscaletokens], layer) == -1) {
+            freeScaleToken(&layer->scaletokens[layer->numscaletokens]);
+            return(-1);
+        }
         layer->numscaletokens++;
         break;
       case(SIZEUNITS):
@@ -4416,15 +4466,15 @@ static void writeLayer(FILE *stream, int indent, layerObj *layer)
 
   indent++;
   writeBlockBegin(stream, indent, "LAYER");
-  /* bindvals */
+  writeHashTable(stream, indent, "BINDVALS", &(layer->bindvals));
   /* class - see below */
   writeString(stream, indent, "CLASSGROUP", NULL, layer->classgroup);
   writeString(stream, indent, "CLASSITEM", NULL, layer->classitem);
   writeCluster(stream, indent, &(layer->cluster));
   writeLayerCompositer(stream, indent, layer->compositer);
   writeString(stream, indent, "CONNECTION", NULL, layer->connection);
-  writeKeyword(stream, indent, "CONNECTIONTYPE", layer->connectiontype, 13, MS_OGR, "OGR", MS_POSTGIS, "POSTGIS", MS_WMS, "WMS", MS_ORACLESPATIAL, "ORACLESPATIAL", MS_WFS, "WFS", MS_PLUGIN, "PLUGIN", MS_UNION, "UNION", MS_UVRASTER, "UVRASTER", MS_CONTOUR, "CONTOUR", MS_KERNELDENSITY, "KERNELDENSITY", MS_IDW, "IDW", MS_FLATGEOBUF, "FLATGEOBUF");
-  writeHashTableInline(stream, indent, "CONNECTIONOPTIONS", &(layer->connectionoptions));
+  writeKeyword(stream, indent, "CONNECTIONTYPE", layer->connectiontype, 12, MS_OGR, "OGR", MS_POSTGIS, "POSTGIS", MS_WMS, "WMS", MS_ORACLESPATIAL, "ORACLESPATIAL", MS_WFS, "WFS", MS_PLUGIN, "PLUGIN", MS_UNION, "UNION", MS_UVRASTER, "UVRASTER", MS_CONTOUR, "CONTOUR", MS_KERNELDENSITY, "KERNELDENSITY", MS_IDW, "IDW", MS_FLATGEOBUF, "FLATGEOBUF");
+  writeHashTable(stream, indent, "CONNECTIONOPTIONS", &(layer->connectionoptions));
   writeString(stream, indent, "DATA", NULL, layer->data);
   writeNumber(stream, indent, "DEBUG", 0, layer->debug); /* is this right? see loadLayer() */
   writeString(stream, indent, "ENCODING", NULL, layer->encoding);
@@ -4475,6 +4525,8 @@ static void writeLayer(FILE *stream, int indent, layerObj *layer)
   writeKeyword(stream, indent, "TRANSFORM", layer->transform, 10, MS_FALSE, "FALSE", MS_UL, "UL", MS_UC, "UC", MS_UR, "UR", MS_CL, "CL", MS_CC, "CC", MS_CR, "CR", MS_LL, "LL", MS_LC, "LC", MS_LR, "LR");
   writeKeyword(stream, indent, "TYPE", layer->type, 9, MS_LAYER_POINT, "POINT", MS_LAYER_LINE, "LINE", MS_LAYER_POLYGON, "POLYGON", MS_LAYER_RASTER, "RASTER", MS_LAYER_ANNOTATION, "ANNOTATION", MS_LAYER_QUERY, "QUERY", MS_LAYER_CIRCLE, "CIRCLE", MS_LAYER_TILEINDEX, "TILEINDEX", MS_LAYER_CHART, "CHART");
   writeKeyword(stream, indent, "UNITS", layer->units, 9, MS_INCHES, "INCHES", MS_FEET ,"FEET", MS_MILES, "MILES", MS_METERS, "METERS", MS_KILOMETERS, "KILOMETERS", MS_NAUTICALMILES, "NAUTICALMILES", MS_DD, "DD", MS_PIXELS, "PIXELS", MS_PERCENTAGES, "PERCENTATGES");
+  writeExpression(stream, indent, "UTFDATA", &(layer->utfdata));
+  writeString(stream, indent, "UTFITEM", NULL, layer->utfitem);
   writeHashTable(stream, indent, "VALIDATION", &(layer->validation));
 
   /* write potentially multiply occuring objects last */
@@ -6042,7 +6094,6 @@ static int loadMapInternal(mapObj *map)
         map->imagetype = getToken();
         break;
       case(LATLON):
-        msFreeProjectionExceptContext(&map->latlon);
         if(loadProjection(&map->latlon) == -1) return MS_FAILURE;
         break;
       case(LAYER):
@@ -6110,7 +6161,12 @@ static int loadMapInternal(mapObj *map)
       case(SYMBOL):
         if(msGrowSymbolSet(&(map->symbolset)) == NULL)
           return MS_FAILURE;
-        if((loadSymbol(map->symbolset.symbol[map->symbolset.numsymbols], map->mappath) == -1)) return MS_FAILURE;
+        if((loadSymbol(map->symbolset.symbol[map->symbolset.numsymbols], map->mappath) == -1)) {
+            msFreeSymbol(map->symbolset.symbol[map->symbolset.numsymbols]);
+            free(map->symbolset.symbol[map->symbolset.numsymbols]);
+            map->symbolset.symbol[map->symbolset.numsymbols] = NULL;
+            return MS_FAILURE;
+        }
         map->symbolset.symbol[map->symbolset.numsymbols]->inmapfile = MS_TRUE;
         map->symbolset.numsymbols++;
         break;
@@ -6156,7 +6212,7 @@ static bool msGetCWD(char* szBuffer, size_t nBufferSize, const char* pszFunction
 /*
 ** Sets up string-based mapfile loading and calls loadMapInternal to do the work.
 */
-mapObj *msLoadMapFromString(char *buffer, char *new_mappath)
+mapObj *msLoadMapFromString(char *buffer, char *new_mappath, const configObj *config)
 {
   mapObj *map;
   struct mstimeval starttime = {0}, endtime = {0};
@@ -6187,6 +6243,8 @@ mapObj *msLoadMapFromString(char *buffer, char *new_mappath)
     return(NULL);
   }
 
+  map->config = config; // create a read-only reference
+  
   msAcquireLock( TLOCK_PARSER ); /* might need to move this lock a bit higher, yup (bug 2108) */
 
   msyystate = MS_TOKENIZE_STRING;
@@ -6408,7 +6466,9 @@ static void mapSubstituteString(mapObj *map, const char *from, const char *to) {
       map->outputformatlist[l]->formatoptions[o] = msCaseReplaceSubstring(map->outputformatlist[l]->formatoptions[o], from, to);
     }
   }
+
   hashTableSubstituteString(&map->web.metadata, from, to);
+  if(map->web.template) map->web.template = msCaseReplaceSubstring(map->web.template, from, to);
 }
 
 static void applyOutputFormatDefaultSubstitutions(outputFormatObj *format, const char *option, hashTableObj *table)
