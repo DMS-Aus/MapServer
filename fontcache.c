@@ -196,10 +196,6 @@ void msFontCacheCleanup() {
 
 unsigned int msGetGlyphIndex(face_element *face, unsigned int unicode) {
   index_element *ic;
-#ifdef USE_THREAD
-  if (use_global_ft_cache)
-      msAcquireLock(TLOCK_TTF);
-#endif
   if(face->face->charmap && face->face->charmap->encoding == FT_ENCODING_MS_SYMBOL) {
     unicode |= 0xf000; /* why? */
   }
