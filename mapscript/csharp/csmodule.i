@@ -76,6 +76,34 @@ inner exceptions. Otherwise the exception message will be concatenated*/
  * C# exception redefinition
  *****************************************************************************/
 #ifdef ALLOW_INNER_EXCEPTIONS
+%exception msLoadMapFromString
+{
+	errorObj *ms_error;
+	__try {
+        $action
+	}    
+	__except(1 /*EXCEPTION_EXECUTE_HANDLER, catch every exception so it doesn't crash IIS*/) {  
+		msSetError(MS_MISCERR, "Unhandled exception in msLoadMapFromString 0x%08x", "msLoadMapFromString()", GetExceptionCode());
+	}
+    ms_error = msGetErrorObj();
+    if (ms_error != NULL && ms_error->code != MS_NOERR) {
+	    if (ms_error->code != MS_NOTFOUND && ms_error->code != -1) {
+            int ms_errorcode = ms_error->code;
+            while (ms_error!=NULL && ms_error->code != MS_NOERR) {
+                char* msg =  msAddErrorDisplayString(NULL, ms_error);
+                if (msg) {
+			        SWIG_CSharpException(SWIG_SystemError, msg);
+			        free(msg);
+		        }
+                else SWIG_CSharpException(SWIG_SystemError, "MapScript unknown error");
+                ms_error = ms_error->next;	  
+            }
+            msResetErrorList();
+            return $null;
+        }
+        msResetErrorList();
+    }
+}
 %exception
 {
 	errorObj *ms_error;
@@ -100,6 +128,30 @@ inner exceptions. Otherwise the exception message will be concatenated*/
     }
 }
 #else
+%exception msLoadMapFromString
+{
+	errorObj *ms_error;
+	__try {
+        $action
+	}    
+	__except(1 /*EXCEPTION_EXECUTE_HANDLER, catch every exception so it doesn't crash IIS*/) {  
+		msSetError(MS_MISCERR, "Unhandled exception in msLoadMapFromString 0x%08x", "msLoadMapFromString()", GetExceptionCode());
+	}
+    ms_error = msGetErrorObj();
+    if (ms_error != NULL && ms_error->code != MS_NOERR) {
+	    if (ms_error->code != MS_NOTFOUND && ms_error->code != -1) {
+            char* msg = msGetErrorString(";"); 
+		    if (msg) {
+			    SWIG_CSharpException(SWIG_SystemError, msg);
+			    free(msg);
+		    }
+            else SWIG_CSharpException(SWIG_SystemError, "MapScript unknown error");
+            msResetErrorList();
+		    return $null;
+        }
+        msResetErrorList();
+    }
+}
 %exception
 {
 	errorObj *ms_error;
@@ -478,3 +530,8 @@ DllExport void SWIGSTDCALL SWIGRegisterByteArrayCallback_$module(SWIG_CSharpByte
     $csclassname ret = (cPtr == System.IntPtr.Zero) ? null : new $csclassname(cPtr, $owner, ThisOwn_false());$excode
     return ret;
   }
+
+%typemap(in) msLoadMapFromString %{ 
+// test
+$1 = ($1_ltype)$input; 
+%}

@@ -53,9 +53,7 @@
 %ignore layerObj::extent;
 #endif
 
-#if !defined(WIN32) || !defined(SWIGCSHARP)
 %newobject msLoadMapFromString;
-#endif
 
 %{
 #include "../../mapserver.h"
@@ -335,19 +333,4 @@ typedef struct {
 %include "rbextend.i"
 #endif
 
-#if defined(WIN32) && defined(SWIGCSHARP)
-%inline %{
-// Wrapper function with exception handling
-mapObj *msLoadMapFromString_wrapper(char *buffer, char *new_mappath, const configObj* config) {
-    __try {
-        return msLoadMapFromString(buffer, new_mappath, config);
-    }    
-    __except(EXCEPTION_EXECUTE_HANDLER) {  
-        // Handle the exception here, e.g., set an error message
-        return NULL;
-    }
-}
-%}
-%rename(msLoadMapFromString) msLoadMapFromString_wrapper;
-#endif
 

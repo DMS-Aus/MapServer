@@ -53,12 +53,30 @@
 
   mapObj(char *mapText, int isMapText /*used as signature only to differentiate this constructor from default constructor*/ ) 
   {
+#if defined(WIN32) && defined(SWIGCSHARP)      
+	  __try {
+        return msLoadMapFromString(mapText, NULL, NULL);
+	  }    
+	  __except(1 /*EXCEPTION_EXECUTE_HANDLER, catch every exception so it doesn't crash IIS*/) {  
+		msSetError(MS_MISCERR, "Unhandled exception in msLoadMapFromString 0x%08x", "msLoadMapFromString()", GetExceptionCode());
+	  }
+#else
       return msLoadMapFromString(mapText, NULL, NULL);
+#endif
   }
 
   mapObj(char *mapText, int isMapText, configObj *config) 
   {
+#if defined(WIN32) && defined(SWIGCSHARP)      
+	  __try {
+        return msLoadMapFromString(mapText, NULL, config);
+	  }    
+	  __except(1 /*EXCEPTION_EXECUTE_HANDLER, catch every exception so it doesn't crash IIS*/) {  
+		msSetError(MS_MISCERR, "Unhandled exception in msLoadMapFromString 0x%08x", "msLoadMapFromString()", GetExceptionCode());
+	  }
+#else
       return msLoadMapFromString(mapText, NULL, config);
+#endif  
   }
 
 #endif 
