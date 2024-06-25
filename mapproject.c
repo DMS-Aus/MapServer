@@ -79,9 +79,10 @@ typedef struct
 
 struct projectionContext
 {
-    PJ_CONTEXT* proj_ctx;
+	void* thread_id;
+	PJ_CONTEXT* proj_ctx;
     unsigned ms_proj_data_change_counter;
-    int refcount;
+    int ref_count;
     pjCacheEntry pj_cache[PJ_CACHE_ENTRY_SIZE];
     int pj_cache_size;
 };
@@ -375,13 +376,14 @@ static void msProjErrorLogger(void * user_data,
 projectionContext* msProjectionContextCreate(void)
 {
     projectionContext* ctx = (projectionContext*)msSmallCalloc(1, sizeof(projectionContext));
+	ctx->thread_id = msGetThreadId();
     ctx->proj_ctx = proj_context_create();
     if( ctx->proj_ctx == NULL )
     {
         msFree(ctx);
         return NULL;
     }
-    MS_REFCNT_INIT(ctx);
+	ctx->ref_count = 1;
     proj_context_use_proj4_init_rules(ctx->proj_ctx, TRUE);
     proj_log_func (ctx->proj_ctx, NULL, msProjErrorLogger);
     return ctx;
@@ -395,7 +397,8 @@ void msProjectionContextUnref(projectionContext* ctx)
 {
     if( !ctx )
         return;
-    if(MS_REFCNT_DECR_IS_ZERO(ctx))
+	--ctx->ref_count;
+	if (ctx->ref_count == 0)
     {
         int i;
         for( i = 0; i < ctx->pj_cache_size; i++ )
@@ -668,6 +671,29 @@ void msFreeProjectionExceptContext(projectionObj *p)
 }
 
 /************************************************************************/
+/*                      msProjectionContextClone()                      */
+/************************************************************************/
+
+static projectionContext *
+msProjectionContextClone(const projectionContext *ctxSrc) {
+  projectionContext *ctx = msProjectionContextCreate();
+  if (ctx) {
+    ctx->pj_cache_size = ctxSrc->pj_cache_size;
+    for (int i = 0; i < ctx->pj_cache_size; ++i) {
+      pjCacheEntry *entryDst = &(ctx->pj_cache[i]);
+      const pjCacheEntry *entrySrc = &(ctxSrc->pj_cache[i]);
+      entryDst->inStr = msStrdup(entrySrc->inStr);
+      entryDst->outStr = msStrdup(entrySrc->outStr);
+      entryDst->pj = proj_clone(
+          /* use target PROJ context for cloning */
+          ctx->proj_ctx, entrySrc->pj);
+    }
+  }
+  return ctx;
+}
+
+
+/************************************************************************/
 /*                 msProjectionInheritContextFrom()                     */
 /************************************************************************/
 
@@ -676,8 +702,12 @@ void msProjectionInheritContextFrom(projectionObj *pDst, const projectionObj* pS
 #if PROJ_VERSION_MAJOR >= 6
     if( pDst->proj_ctx == NULL && pSrc->proj_ctx != NULL)
     {
-        pDst->proj_ctx = pSrc->proj_ctx;
-        MS_REFCNT_INCR(pDst->proj_ctx);
+    if (pSrc->proj_ctx->thread_id == msGetThreadId()) {
+      pDst->proj_ctx = pSrc->proj_ctx;
+      pDst->proj_ctx->ref_count++;
+    } else {
+      pDst->proj_ctx = msProjectionContextClone(pSrc->proj_ctx);
+    }
     }
 #else
     (void)pDst;
@@ -695,7 +725,7 @@ void msProjectionSetContext(projectionObj *p, projectionContext* ctx)
     if( p->proj_ctx == NULL && ctx != NULL)
     {
         p->proj_ctx = ctx;
-        MS_REFCNT_INCR(p->proj_ctx);
+		p->proj_ctx->ref_count++;
     }
 #else
     (void)p;
