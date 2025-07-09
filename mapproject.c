@@ -82,7 +82,7 @@ struct projectionContext
 	void* thread_id;
 	PJ_CONTEXT* proj_ctx;
     unsigned ms_proj_data_change_counter;
-    int ref_count;
+    int refcount;
     pjCacheEntry pj_cache[PJ_CACHE_ENTRY_SIZE];
     int pj_cache_size;
 };
@@ -383,7 +383,7 @@ projectionContext* msProjectionContextCreate(void)
         msFree(ctx);
         return NULL;
     }
-	ctx->ref_count = 1;
+    MS_REFCNT_INIT(ctx);
     proj_context_use_proj4_init_rules(ctx->proj_ctx, TRUE);
     proj_log_func (ctx->proj_ctx, NULL, msProjErrorLogger);
     return ctx;
@@ -397,8 +397,7 @@ void msProjectionContextUnref(projectionContext* ctx)
 {
     if( !ctx )
         return;
-	--ctx->ref_count;
-	if (ctx->ref_count == 0)
+    if (MS_REFCNT_DECR_IS_ZERO(ctx))
     {
         int i;
         for( i = 0; i < ctx->pj_cache_size; i++ )
@@ -704,7 +703,7 @@ void msProjectionInheritContextFrom(projectionObj *pDst, const projectionObj* pS
     {
     if (pSrc->proj_ctx->thread_id == msGetThreadId()) {
       pDst->proj_ctx = pSrc->proj_ctx;
-      pDst->proj_ctx->ref_count++;
+      MS_REFCNT_INCR(pDst->proj_ctx);
     } else {
       pDst->proj_ctx = msProjectionContextClone(pSrc->proj_ctx);
     }
@@ -725,7 +724,7 @@ void msProjectionSetContext(projectionObj *p, projectionContext* ctx)
     if( p->proj_ctx == NULL && ctx != NULL)
     {
         p->proj_ctx = ctx;
-		p->proj_ctx->ref_count++;
+        MS_REFCNT_INCR(p->proj_ctx);
     }
 #else
     (void)p;
@@ -2993,7 +2992,7 @@ projectionContext* msProjectionContextGetFromPool()
     {
         LinkedListOfProjContext* next = headOfLinkedListOfProjContext->next;
         context = headOfLinkedListOfProjContext->context;
-		context->thread_id = msGetThreadId();
+        context->thread_id = msGetThreadId();
         msFree(headOfLinkedListOfProjContext);
         headOfLinkedListOfProjContext = next;
     }
