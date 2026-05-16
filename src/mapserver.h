@@ -446,7 +446,7 @@ static __inline long int MS_NINT(double __x) {
 
 #define MS_RENDERER_PLUGIN(format) ((format)->renderer > MS_RENDER_WITH_PLUGIN)
 
-/*#define MS_CELLSIZE(min, max, d)                                               \
+/*#define MS_CELLSIZE(min, max, d) \
   (((max) - (min)) / ((d)-1))*/ /* where min/max are from an MapServer pixel     \
                                  center-to-pixel center extent */
 #define MS_OWS_CELLSIZE(min, max, d)                                           \
@@ -556,6 +556,10 @@ enum MS_UNITS {
   MS_PERCENTAGES,
   MS_NAUTICALMILES,
   MS_INHERIT = -1
+};
+enum MS_SCALEBAR_MEASURE {
+  MS_SCALEBAR_MEASURE_CARTESIAN,
+  MS_SCALEBAR_MEASURE_GEODESIC
 };
 enum MS_SHAPE_TYPE {
   MS_SHAPE_POINT,
@@ -1913,6 +1917,7 @@ typedef struct {
   colorObj outlinecolor; ///< Foreground outline color - see :ref:`OUTLINECOLOR
                          ///< <mapfile-scalebar-outlinecolor>`
   int units;             ///< See :ref:`UNITS <mapfile-scalebar-units>`
+  int measure;           ///< See :ref:`MEASURE <mapfile-scalebar-measure>`
   int status;            ///< ON, OFF or EMBED - see :ref:`STATUS
               ///< <mapfile-scalebar-status>` - :data:`MS_ON`, :data:`MS_OFF`,
               ///< or :data:`MS_EMBED`.
@@ -2766,6 +2771,10 @@ MS_DLL_EXPORT double Pix2Georef(int nPixPos, int nPixMin, int nPixMax,
                                 int bULisYOrig);
 MS_DLL_EXPORT double Pix2LayerGeoref(mapObj *map, layerObj *layer, int value);
 MS_DLL_EXPORT double msInchesPerUnit(int units, double center_lat);
+MS_DLL_EXPORT int msScalebarMeasurePixelSpan(mapObj *map,
+                                             const scalebarObj *scalebar,
+                                             double pixel_width,
+                                             double *distance);
 MS_DLL_EXPORT int msEmbedScalebar(mapObj *map, imageObj *img);
 
 MS_DLL_EXPORT int msPointInRect(const pointObj *p,

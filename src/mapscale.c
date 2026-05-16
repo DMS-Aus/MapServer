@@ -70,16 +70,19 @@ static double roundInterval(double d) {
   return (-1);
 }
 
-static double roundInterval2(double d)
-{
+static double roundInterval2(double d) {
   double magnitude, ratio;
-      
+
   magnitude = floor(log10(d));
   ratio = d / pow(10, magnitude);
-  if (ratio < 1.5) ratio = 1;
-  else if (ratio < 4) ratio = 2;
-  else if (ratio < 8) ratio = 5;
-  else ratio = 10;
+  if (ratio < 1.5)
+    ratio = 1;
+  else if (ratio < 4)
+    ratio = 2;
+  else if (ratio < 8)
+    ratio = 5;
+  else
+    ratio = 10;
 
   return ratio * pow(10, magnitude);
 }
@@ -170,12 +173,149 @@ double msInchesPerUnit(int units, double center_lat) {
 
 #define X_STEP_SIZE 5
 
+static double msScalebarMeasurePixelSpanCartesian(mapObj *map,
+                                                  const scalebarObj *scalebar,
+                                                  double pixel_width) {
+  return MS_CONVERT_UNIT(map->units, scalebar->units,
+                         map->cellsize * pixel_width);
+}
+
+static void msScalebarSamplePixel(const mapObj *map, double *px, double *py) {
+  double y;
+
+  switch (map->scalebar.position) {
+  case MS_LL:
+  case MS_LR:
+  case MS_LC:
+    y = map->height - map->scalebar.offsety - 1.0;
+    break;
+  case MS_UL:
+  case MS_UR:
+  case MS_UC:
+    y = map->scalebar.offsety;
+    break;
+  default:
+    y = map->height * 0.5;
+    break;
+  }
+
+  *px = map->width * 0.5;
+  *py = MS_MAX(0.0, MS_MIN(y, map->height - 1.0));
+}
+
+static int msScalebarProjectPointToLatLon(mapObj *map, pointObj *point) {
+  if (map->projection.proj) {
+    if (msProjectPoint(&map->projection, &map->latlon, point) == MS_SUCCESS)
+      return MS_SUCCESS;
+  }
+
+  if (!map->projection.proj && map->units == MS_DD)
+    return MS_SUCCESS;
+
+  if (map->projection.proj)
+    msSetError(MS_PROJERR,
+               "Failed to project scalebar measurement endpoint to "
+               "geographic coordinates.",
+               "msDrawScalebar()");
+  else
+    msSetError(MS_MISCERR,
+               "Geodesic scalebar measurement requires a map projection or "
+               "decimal degree map units.",
+               "msDrawScalebar()");
+  return MS_FAILURE;
+}
+
+static int msScalebarMeasurePixelSpanGeodesic(mapObj *map,
+                                              const scalebarObj *scalebar,
+                                              double pixel_width,
+                                              double *distance) {
+  pointObj p1, p2;
+  PJ_COORD c1, c2, geod;
+  double sample_px, sample_py;
+  double sample_x, sample_y;
+  const double half_width = map->cellsize * pixel_width / 2.0;
+
+  /*
+   * GEODESIC scalebars are local measurements. POSITION and OFFSET select a
+   * representative vertical sample row, while the horizontal sample remains
+   * centered in the map.
+   */
+  if (!map->latlon.proj) {
+    msSetError(MS_MISCERR,
+               "Geodesic scalebar measurement requires a geographic "
+               "projection definition.",
+               "msDrawScalebar()");
+    return MS_FAILURE;
+  }
+
+  msScalebarSamplePixel(map, &sample_px, &sample_py);
+  sample_x = map->extent.minx + sample_px * map->cellsize;
+  sample_y = map->extent.maxy - sample_py * map->cellsize;
+
+  p1.x = sample_x - half_width;
+  p1.y = sample_y;
+  p2.x = sample_x + half_width;
+  p2.y = sample_y;
+
+  if (msScalebarProjectPointToLatLon(map, &p1) != MS_SUCCESS ||
+      msScalebarProjectPointToLatLon(map, &p2) != MS_SUCCESS)
+    return MS_FAILURE;
+
+  c1.lp.lam = p1.x * MS_DEG_TO_RAD;
+  c1.lp.phi = p1.y * MS_DEG_TO_RAD;
+  c2.lp.lam = p2.x * MS_DEG_TO_RAD;
+  c2.lp.phi = p2.y * MS_DEG_TO_RAD;
+
+  geod = proj_geod(map->latlon.proj, c1, c2);
+  if (!isfinite(geod.geod.s) || geod.geod.s <= 0) {
+    msSetError(MS_PROJERR,
+               "Failed to calculate a positive geodesic scalebar distance.",
+               "msDrawScalebar()");
+    return MS_FAILURE;
+  }
+
+  *distance = MS_CONVERT_UNIT(MS_METERS, scalebar->units, geod.geod.s);
+  return MS_SUCCESS;
+}
+
+int msScalebarMeasurePixelSpan(mapObj *map, const scalebarObj *scalebar,
+                               double pixel_width, double *distance) {
+  int status;
+
+  switch (scalebar->measure) {
+  case MS_SCALEBAR_MEASURE_CARTESIAN:
+    *distance = msScalebarMeasurePixelSpanCartesian(map, scalebar, pixel_width);
+    status = MS_SUCCESS;
+    break;
+  case MS_SCALEBAR_MEASURE_GEODESIC:
+    status = msScalebarMeasurePixelSpanGeodesic(map, scalebar, pixel_width,
+                                                distance);
+    break;
+  default:
+    msSetError(MS_MISCERR, "Unsupported scalebar measurement mode.",
+               "msDrawScalebar()");
+    return MS_FAILURE;
+  }
+
+  if (status != MS_SUCCESS)
+    return MS_FAILURE;
+
+  if (!isfinite(*distance) || *distance <= 0) {
+    msSetError(MS_MISCERR,
+               "Scalebar measurement did not produce a positive distance.",
+               "msDrawScalebar()");
+    return MS_FAILURE;
+  }
+  return MS_SUCCESS;
+}
+
 imageObj *msDrawScalebar(mapObj *map) {
   int status;
   char label[32];
   double i, msx, resolutionfactor, strokeWidth, vSlop;
   int j;
-  int isx, sx, sy, ox, oy, state, dsx, scalebarWidth, scalebarHeight, hMargin, vMargin, units;
+  int isx, sx, sy, ox, oy, state, dsx, scalebarWidth, scalebarHeight, hMargin,
+      vMargin, units;
   pointObj p;
   rectObj r;
   imageObj *image = NULL;
@@ -197,13 +337,14 @@ imageObj *msDrawScalebar(mapObj *map) {
   }
 
   renderer = MS_MAP_RENDERER(map);
-  if(!renderer || !(MS_MAP_RENDERER(map)->supports_pixel_buffer || MS_MAP_RENDERER(map)->supports_svg)) {
+  if (!renderer || !(MS_MAP_RENDERER(map)->supports_pixel_buffer ||
+                     MS_MAP_RENDERER(map)->supports_svg)) {
     msSetError(MS_MISCERR, "Outputformat not supported for scalebar",
                "msDrawScalebar()");
     return (NULL);
   }
 
-  resolutionfactor = map->resolution/map->defresolution;
+  resolutionfactor = map->resolution / map->defresolution;
   scalebarWidth = MS_NINT(resolutionfactor * map->scalebar.width);
   scalebarHeight = MS_NINT(resolutionfactor * map->scalebar.height);
   hMargin = MS_NINT(resolutionfactor * HMARGIN);
@@ -225,8 +366,8 @@ imageObj *msDrawScalebar(mapObj *map) {
   if (msGetTextSymbolSize(map, &ts, &r) != MS_SUCCESS) {
     return NULL;
   }
-  fontWidth = (r.maxx-r.minx)/10.0 * resolutionfactor;
-  fontHeight = (r.maxy -r.miny) * resolutionfactor;
+  fontWidth = (r.maxx - r.minx) / 10.0 * resolutionfactor;
+  fontHeight = (r.maxy - r.miny) * resolutionfactor;
 
   map->cellsize = msAdjustExtent(&(map->extent), map->width, map->height);
   status = msCalculateScale(map->extent, map->units, map->width, map->height,
@@ -234,34 +375,46 @@ imageObj *msDrawScalebar(mapObj *map) {
   if (status != MS_SUCCESS) {
     return (NULL);
   }
-  dsx = map->scalebar.width - 2*hMargin;
+  dsx = map->scalebar.width - 2 * hMargin;
   do {
-    msx = (map->cellsize * dsx)/(msInchesPerUnit(units,0)/msInchesPerUnit(map->units,0));
-    i = roundInterval2(msx/map->scalebar.intervals);
-    if (units == MS_METERS && i >= 1000) {
-        units = MS_KILOMETERS;
-        i /= 1000;
+    double display_msx, units_per_pixel;
+    if (msScalebarMeasurePixelSpan(map, &map->scalebar, dsx, &msx) !=
+        MS_SUCCESS) {
+      status = MS_FAILURE;
+      goto scale_cleanup;
     }
-    else if (units == MS_KILOMETERS && i <= 0.001) {
-        units = MS_METERS;
-        i *= 1000;
+    display_msx = MS_CONVERT_UNIT(map->scalebar.units, units, msx);
+    i = roundInterval2(display_msx / map->scalebar.intervals);
+    if (units == MS_METERS && i >= 1000) {
+      units = MS_KILOMETERS;
+      i /= 1000;
+      display_msx = MS_CONVERT_UNIT(map->scalebar.units, units, msx);
+    } else if (units == MS_KILOMETERS && i <= 0.001) {
+      units = MS_METERS;
+      i *= 1000;
+      display_msx = MS_CONVERT_UNIT(map->scalebar.units, units, msx);
     }
     snprintf(label, sizeof(label), "%g",
              map->scalebar.intervals * i); /* last label */
-    isx = MS_NINT((i/(msInchesPerUnit(map->units,0)/msInchesPerUnit(units,0)))/map->cellsize);
-    sx = (map->scalebar.intervals*isx) + MS_NINT((1.5 + strlen(label)/2.0 + strlen(unitText[units]))*fontWidth);
+    units_per_pixel = display_msx / dsx;
+    isx = MS_NINT(i / units_per_pixel);
+    sx = (map->scalebar.intervals * isx) +
+         MS_NINT((1.5 + strlen(label) / 2.0 + strlen(unitText[units])) *
+                 fontWidth);
 
-    if(sx <= (scalebarWidth - 2*hMargin)) break; /* it will fit */
+    if (sx <= (scalebarWidth - 2 * hMargin))
+      break; /* it will fit */
 
     dsx -= X_STEP_SIZE; /* change the desired size in hopes that it will fit in
                            user supplied width */
   } while (1);
 
-  sy = MS_NINT((2*vMargin) + MS_NINT(VSPACING*fontHeight) + fontHeight + scalebarHeight - vSlop);
+  sy = MS_NINT((2 * vMargin) + MS_NINT(VSPACING * fontHeight) + fontHeight +
+               scalebarHeight - vSlop);
 
   /* For embed scalebars set scalebar width to the content width */
   if (map->scalebar.status == MS_EMBED) {
-      scalebarWidth = sx + 2*hMargin;
+    scalebarWidth = sx + 2 * hMargin;
   }
 
   /*Ensure we have an image format representing the options for the scalebar.*/
@@ -296,7 +449,8 @@ imageObj *msDrawScalebar(mapObj *map) {
     ox = MS_NINT((scalebarWidth - sx) + fontWidth);
     break;
   default:
-    ox = MS_NINT((scalebarWidth - sx)/2.0 + fontWidth/2.0); /* center the computed scalebar */
+    ox = MS_NINT((scalebarWidth - sx) / 2.0 +
+                 fontWidth / 2.0); /* center the computed scalebar */
   }
   oy = vMargin;
 
@@ -342,8 +496,9 @@ imageObj *msDrawScalebar(mapObj *map) {
       sprintf(label, "%g", j * i);
       map->scalebar.label.position = MS_CC;
       p.x = ox + j * isx; /* + MS_NINT(fontPtr->w/2); */
-      p.y = oy + scalebarHeight + MS_NINT(VSPACING*fontHeight);
-      status = msDrawLabel(map,image,p,msStrdup(label),&map->scalebar.label,resolutionfactor);
+      p.y = oy + scalebarHeight + MS_NINT(VSPACING * fontHeight);
+      status = msDrawLabel(map, image, p, msStrdup(label), &map->scalebar.label,
+                           resolutionfactor);
       if (MS_UNLIKELY(status == MS_FAILURE)) {
         goto scale_cleanup;
       }
@@ -351,11 +506,12 @@ imageObj *msDrawScalebar(mapObj *map) {
     }
     sprintf(label, "%g", j * i);
     ox = ox + j * isx - MS_NINT((strlen(label) * fontWidth) / 2.0);
-    sprintf(label, "%g %s", j*i, unitText[units]);
+    sprintf(label, "%g %s", j * i, unitText[units]);
     map->scalebar.label.position = MS_CR;
     p.x = ox; /* + MS_NINT(fontPtr->w/2); */
-    p.y = oy + scalebarHeight + MS_NINT(VSPACING*fontHeight);
-    status = msDrawLabel(map,image,p,msStrdup(label),&map->scalebar.label,resolutionfactor);
+    p.y = oy + scalebarHeight + MS_NINT(VSPACING * fontHeight);
+    status = msDrawLabel(map, image, p, msStrdup(label), &map->scalebar.label,
+                         resolutionfactor);
     if (MS_UNLIKELY(status == MS_FAILURE)) {
       goto scale_cleanup;
     }
@@ -381,7 +537,7 @@ imageObj *msDrawScalebar(mapObj *map) {
 
     points[0].y = oy;
     points[1].y = oy + scalebarHeight;
-    p.y = oy + scalebarHeight + MS_NINT(VSPACING*fontHeight);
+    p.y = oy + scalebarHeight + MS_NINT(VSPACING * fontHeight);
     for (j = 0; j <= map->scalebar.intervals; j++) {
       points[0].x = points[1].x = ox + j * isx;
       status = renderer->renderLine(image, &shape, &strokeStyle);
@@ -394,11 +550,12 @@ imageObj *msDrawScalebar(mapObj *map) {
         map->scalebar.label.position = MS_CC;
         p.x = ox + j * isx; /* + MS_NINT(fontPtr->w/2); */
       } else {
-        sprintf(label, "%g %s", j*i, unitText[units]);
+        sprintf(label, "%g %s", j * i, unitText[units]);
         map->scalebar.label.position = MS_CR;
         p.x = ox + j * isx - MS_NINT((strlen(label) * fontWidth) / 2.0);
       }
-      status = msDrawLabel(map,image,p,msStrdup(label),&map->scalebar.label,resolutionfactor);
+      status = msDrawLabel(map, image, p, msStrdup(label), &map->scalebar.label,
+                           resolutionfactor);
       if (MS_UNLIKELY(status == MS_FAILURE)) {
         goto scale_cleanup;
       }
@@ -442,14 +599,13 @@ int msEmbedScalebar(mapObj *map, imageObj *img) {
   if (!MS_RENDERER_PLUGIN(map->outputformat) ||
       !MS_MAP_RENDERER(map)->supports_pixel_buffer) {
     imageType = msStrdup(map->imagetype); /* save format */
-    if MS_DRIVER_CAIRO(map->outputformat) {
+    if MS_DRIVER_CAIRO (map->outputformat) {
 #ifdef USE_SVG_CAIRO
-      map->outputformat = msSelectOutputFormat( map, "svg" );
+      map->outputformat = msSelectOutputFormat(map, "svg");
 #else
-      map->outputformat = msSelectOutputFormat( map, "cairopng" );
+      map->outputformat = msSelectOutputFormat(map, "cairopng");
 #endif
-    }
-    else
+    } else
       map->outputformat = msSelectOutputFormat(map, "png");
 
     msInitializeRendererVTable(map->outputformat);
@@ -472,10 +628,10 @@ int msEmbedScalebar(mapObj *map, imageObj *img) {
 
   if (MS_MAP_RENDERER(map)->supports_svg) {
     int size;
-    char* svg_text;
+    char *svg_text;
     embeddedSymbol->type = MS_SYMBOL_SVG;
     svg_text = msSaveImageBuffer(image, &size, map->outputformat);
-    msFreeImage( image );
+    msFreeImage(image);
     if (!svg_text)
       return MS_FAILURE;
     msFree(embeddedSymbol->full_pixmap_path);
@@ -483,18 +639,19 @@ int msEmbedScalebar(mapObj *map, imageObj *img) {
     memcpy(embeddedSymbol->full_pixmap_path, svg_text, size);
     embeddedSymbol->full_pixmap_path[size] = 0;
     msFree(svg_text);
-    if(MS_SUCCESS != msPreloadSVGSymbol(embeddedSymbol))
+    if (MS_SUCCESS != msPreloadSVGSymbol(embeddedSymbol))
       return MS_FAILURE;
-   }
-  else {
-    embeddedSymbol->pixmap_buffer = calloc(1,sizeof(rasterBufferObj));
-    MS_CHECK_ALLOC(embeddedSymbol->pixmap_buffer, sizeof(rasterBufferObj), MS_FAILURE);
+  } else {
+    embeddedSymbol->pixmap_buffer = calloc(1, sizeof(rasterBufferObj));
+    MS_CHECK_ALLOC(embeddedSymbol->pixmap_buffer, sizeof(rasterBufferObj),
+                   MS_FAILURE);
 
-    if(MS_SUCCESS != renderer->getRasterBufferCopy(image,embeddedSymbol->pixmap_buffer)) {
-      msFreeImage( image );
+    if (MS_SUCCESS !=
+        renderer->getRasterBufferCopy(image, embeddedSymbol->pixmap_buffer)) {
+      msFreeImage(image);
       return MS_FAILURE;
     }
-    msFreeImage( image );
+    msFreeImage(image);
     embeddedSymbol->type = MS_SYMBOL_PIXMAP;
     embeddedSymbol->sizex = embeddedSymbol->pixmap_buffer->width;
     embeddedSymbol->sizey = embeddedSymbol->pixmap_buffer->height;
@@ -506,28 +663,33 @@ int msEmbedScalebar(mapObj *map, imageObj *img) {
 
   switch (map->scalebar.position) {
   case (MS_LL):
-    point.x = MS_NINT(embeddedSymbol->sizex/2.0) + map->scalebar.offsetx;
-    point.y = map->height - MS_NINT(embeddedSymbol->sizey/2.0) - map->scalebar.offsety;
+    point.x = MS_NINT(embeddedSymbol->sizex / 2.0) + map->scalebar.offsetx;
+    point.y = map->height - MS_NINT(embeddedSymbol->sizey / 2.0) -
+              map->scalebar.offsety;
     break;
   case (MS_LR):
-    point.x = map->width - MS_NINT(embeddedSymbol->sizex/2.0) - map->scalebar.offsetx;
-    point.y = map->height - MS_NINT(embeddedSymbol->sizey/2.0) - map->scalebar.offsety;
+    point.x = map->width - MS_NINT(embeddedSymbol->sizex / 2.0) -
+              map->scalebar.offsetx;
+    point.y = map->height - MS_NINT(embeddedSymbol->sizey / 2.0) -
+              map->scalebar.offsety;
     break;
   case (MS_LC):
     point.x = MS_NINT(map->width / 2.0) + map->scalebar.offsetx;
-    point.y = map->height - MS_NINT(embeddedSymbol->sizey/2.0) - map->scalebar.offsety;
+    point.y = map->height - MS_NINT(embeddedSymbol->sizey / 2.0) -
+              map->scalebar.offsety;
     break;
   case (MS_UR):
-    point.x = map->width - MS_NINT(embeddedSymbol->sizex/2.0) - map->scalebar.offsetx;
-    point.y = MS_NINT(embeddedSymbol->sizey/2.0) + map->scalebar.offsety;
+    point.x = map->width - MS_NINT(embeddedSymbol->sizex / 2.0) -
+              map->scalebar.offsetx;
+    point.y = MS_NINT(embeddedSymbol->sizey / 2.0) + map->scalebar.offsety;
     break;
   case (MS_UL):
-    point.x = MS_NINT(embeddedSymbol->sizex/2.0) + map->scalebar.offsetx;
-    point.y = MS_NINT(embeddedSymbol->sizey/2.0) + map->scalebar.offsety;
+    point.x = MS_NINT(embeddedSymbol->sizex / 2.0) + map->scalebar.offsetx;
+    point.y = MS_NINT(embeddedSymbol->sizey / 2.0) + map->scalebar.offsety;
     break;
   case (MS_UC):
     point.x = MS_NINT(map->width / 2.0) + map->scalebar.offsetx;
-    point.y = MS_NINT(embeddedSymbol->sizey/2.0) + map->scalebar.offsety;
+    point.y = MS_NINT(embeddedSymbol->sizey / 2.0) + map->scalebar.offsety;
     break;
   }
 
