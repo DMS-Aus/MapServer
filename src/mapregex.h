@@ -60,6 +60,10 @@ MS_API_EXPORT(int)
 ms_regexec(const ms_regex_t *, const char *, size_t, ms_regmatch_t[], int);
 MS_API_EXPORT(void) ms_regfree(ms_regex_t *);
 
+#ifdef USE_PCRE2
+MS_API_EXPORT(char *) msPCRE2EscapeBracketBackslashes(const char *);
+#endif
+
 #ifndef BUILDING_REGEX_PROXY
 
 /* === regcomp.c === */

@@ -970,7 +970,8 @@ int msPreloadImageSymbol(rendererVTableObj *renderer, symbolObj *symbol) {
     if (symbol->renderer_free_func) 
       symbol->renderer_free_func(symbol);
 
-    symbol->renderer_free_func = renderer->freeSymbol;
+    symbol->renderer_free_func =
+        (void (*)(symbolObj *))renderer->freeSymbol;
   }
   symbol->sizex = symbol->pixmap_buffer->width;
   symbol->sizey = symbol->pixmap_buffer->height;

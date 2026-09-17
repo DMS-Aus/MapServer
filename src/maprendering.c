@@ -621,7 +621,8 @@ int msDrawLineSymbol(mapObj *map, imageObj *image, shapeObj *p, styleObj *style,
         if (symbol->renderer_free_func) 
           symbol->renderer_free_func(symbol);
  
-        symbol->renderer_free_func = renderer->freeSymbol;
+        symbol->renderer_free_func =
+            (void (*)(symbolObj *))renderer->freeSymbol;
       }
 
       width = style->width * scalefactor;
@@ -775,7 +776,8 @@ int msDrawShadeSymbol(mapObj *map, imageObj *image, shapeObj *p,
         if(symbol->renderer_free_func) 
           symbol->renderer_free_func(symbol);
 
-        symbol->renderer_free_func = renderer->freeSymbol;
+        symbol->renderer_free_func =
+            (void (*)(symbolObj *))renderer->freeSymbol;
       }
 
       if (style->offsetx != 0 || style->offsety != 0) {
@@ -927,7 +929,8 @@ int msDrawMarkerSymbol(mapObj *map, imageObj *image, pointObj *p,
         if (symbol->renderer_free_func) 
           symbol->renderer_free_func(symbol);
 
-        symbol->renderer_free_func = renderer->freeSymbol;
+        symbol->renderer_free_func =
+            (void (*)(symbolObj *))renderer->freeSymbol;
       }
       if (preloadSymbol(&map->symbolset, symbol, renderer) != MS_SUCCESS) {
         return MS_FAILURE;

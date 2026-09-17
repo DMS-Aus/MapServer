@@ -1035,7 +1035,12 @@ int msPreloadSVGSymbol(symbolObj *symbol) {
   }
 #else
   {
-    cache->svgc = rsvg_handle_new_from_file(symbol->full_pixmap_path, NULL);
+    if (EQUALN(symbol->full_pixmap_path, "<?xml", 5))
+      cache->svgc = rsvg_handle_new_from_data(
+          (const guint8 *)symbol->full_pixmap_path,
+          strlen(symbol->full_pixmap_path), NULL);
+    else
+      cache->svgc = rsvg_handle_new_from_file(symbol->full_pixmap_path, NULL);
     if (!cache->svgc) {
       msSetError(MS_RENDERERERR, "failed to load svg file %s",
                  "msPreloadSVGSymbol()", symbol->full_pixmap_path);

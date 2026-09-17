@@ -950,7 +950,7 @@ int msEmbedLegend(mapObj *map, imageObj *img) {
       !MS_MAP_RENDERER(map)->supports_pixel_buffer) {
     imageType = msStrdup(map->imagetype); /* save format */
     if MS_DRIVER_CAIRO(map->outputformat) {
-#ifdef USE_SVG_CAIRO
+#if defined(USE_SVG_CAIRO) || defined(USE_RSVG)
       map->outputformat = msSelectOutputFormat( map, "svg" );
 #else
       map->outputformat = msSelectOutputFormat( map, "cairopng" );
@@ -1012,7 +1012,8 @@ int msEmbedLegend(mapObj *map, imageObj *img) {
   }
 
   legendSymbol->renderer = renderer;
-  legendSymbol->renderer_free_func = renderer->freeSymbol;
+  legendSymbol->renderer_free_func =
+      (void (*)(symbolObj *))renderer->freeSymbol;
 
   legendSymbol->name = msStrdup(LEGEND_SYMBOL_NAME);
 
