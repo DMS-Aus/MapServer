@@ -1012,7 +1012,8 @@ int msEmbedLegend(mapObj *map, imageObj *img) {
   }
 
   legendSymbol->renderer = renderer;
-  legendSymbol->renderer_free_func = renderer->freeSymbol;
+  legendSymbol->renderer_free_func =
+      (void (*)(symbolObj *))renderer->freeSymbol;
 
   legendSymbol->name = msStrdup(LEGEND_SYMBOL_NAME);
 
