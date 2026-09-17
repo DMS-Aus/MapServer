@@ -177,7 +177,15 @@ int msApplyCompositingFilter(mapObj *map, rasterBufferObj *rb,
   regmatch_t pmatch[3];
 
   /* test for blurring filter */
+#ifdef USE_PCRE2
+  {
+    char *pat = msPCRE2EscapeBracketBackslashes("blur\\(([0-9]+)\\)");
+    regcomp(&regex, pat, REG_EXTENDED);
+    free(pat);
+  }
+#else
   regcomp(&regex, "blur\\(([0-9]+)\\)", REG_EXTENDED);
+#endif
   rstatus = regexec(&regex, filter->filter, 2, pmatch, 0);
   regfree(&regex);
   if (!rstatus) {
@@ -195,7 +203,16 @@ int msApplyCompositingFilter(mapObj *map, rasterBufferObj *rb,
   }
 
   /* test for translation filter */
+#ifdef USE_PCRE2
+  {
+    char *pat = msPCRE2EscapeBracketBackslashes(
+        "translate\\((-?[0-9]+),(-?[0-9]+)\\)");
+    regcomp(&regex, pat, REG_EXTENDED);
+    free(pat);
+  }
+#else
   regcomp(&regex, "translate\\((-?[0-9]+),(-?[0-9]+)\\)", REG_EXTENDED);
+#endif
   rstatus = regexec(&regex, filter->filter, 3, pmatch, 0);
   regfree(&regex);
   if (!rstatus) {

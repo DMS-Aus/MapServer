@@ -79,12 +79,16 @@ inner exceptions. Otherwise the exception message will be concatenated*/
 %exception msLoadMapFromString
 {
 	errorObj *ms_error;
+#if defined(WIN32) && defined(SWIGCSHARP)
 	__try {
         $action
-	}    
-	__except(1 /*EXCEPTION_EXECUTE_HANDLER, catch every exception so it doesn't crash IIS*/) {  
+	}
+	__except(1 /*EXCEPTION_EXECUTE_HANDLER, catch every exception so it doesn't crash IIS*/) {
 		msSetError(MS_MISCERR, "Unhandled exception in msLoadMapFromString 0x%08x", "msLoadMapFromString()", GetExceptionCode());
 	}
+#else
+        $action
+#endif
     ms_error = msGetErrorObj();
     if (ms_error != NULL && ms_error->code != MS_NOERR) {
 	    if (ms_error->code != MS_NOTFOUND && ms_error->code != -1) {
@@ -131,12 +135,16 @@ inner exceptions. Otherwise the exception message will be concatenated*/
 %exception msLoadMapFromString
 {
 	errorObj *ms_error;
+#if defined(WIN32) && defined(SWIGCSHARP)
 	__try {
         $action
-	}    
-	__except(1 /*EXCEPTION_EXECUTE_HANDLER, catch every exception so it doesn't crash IIS*/) {  
+	}
+	__except(1 /*EXCEPTION_EXECUTE_HANDLER, catch every exception so it doesn't crash IIS*/) {
 		msSetError(MS_MISCERR, "Unhandled exception in msLoadMapFromString 0x%08x", "msLoadMapFromString()", GetExceptionCode());
 	}
+#else
+        $action
+#endif
     ms_error = msGetErrorObj();
     if (ms_error != NULL && ms_error->code != MS_NOERR) {
 	    if (ms_error->code != MS_NOTFOUND && ms_error->code != -1) {

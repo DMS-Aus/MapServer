@@ -58,6 +58,83 @@
 #include <regex.h>
 #endif
 
+#ifdef USE_PCRE2
+/* PCRE2 escapes backslash inside [...]; POSIX regex doesn't. Double
+ * lone backslashes in brackets so PCRE2 sees a literal one too.
+ * Already-paired "\\" is left alone, so this is idempotent. */
+MS_API_EXPORT(char *) msPCRE2EscapeBracketBackslashes(const char *expr) {
+  size_t len = strlen(expr);
+  char *out = (char *)msSmallMalloc(len * 2 + 1);
+  size_t oi = 0;
+  int in_bracket = 0;
+  size_t bracket_start = 0;
+
+  for (size_t i = 0; i < len;) {
+    char c = expr[i];
+
+    if (!in_bracket) {
+      if (c == '[') {
+        in_bracket = 1;
+        out[oi++] = c;
+        i++;
+        if (i < len && expr[i] == '^') {
+          out[oi++] = expr[i];
+          i++;
+        }
+        bracket_start = i;
+        continue;
+      }
+      out[oi++] = c;
+      i++;
+      continue;
+    }
+
+    if (c == ']' && i != bracket_start) {
+      in_bracket = 0;
+      out[oi++] = c;
+      i++;
+      continue;
+    }
+
+    /* [:class:], [.x.], [=x=] - pass through untouched */
+    if (c == '[' && i + 1 < len &&
+        (expr[i + 1] == ':' || expr[i + 1] == '.' || expr[i + 1] == '=')) {
+      char sub = expr[i + 1];
+      out[oi++] = expr[i];
+      out[oi++] = expr[i + 1];
+      i += 2;
+      while (i + 1 < len && !(expr[i] == sub && expr[i + 1] == ']')) {
+        out[oi++] = expr[i];
+        i++;
+      }
+      if (i + 1 < len) {
+        out[oi++] = expr[i];
+        out[oi++] = expr[i + 1];
+        i += 2;
+      }
+      continue;
+    }
+
+    if (c == '\\') {
+      out[oi++] = '\\';
+      out[oi++] = '\\';
+      if (i + 1 < len && expr[i + 1] == '\\') {
+        i += 2; /* already escaped */
+      } else {
+        i += 1; /* lone backslash - double it */
+      }
+      continue;
+    }
+
+    out[oi++] = c;
+    i++;
+  }
+
+  out[oi] = '\0';
+  return out;
+}
+#endif
+
 MS_API_EXPORT(int) ms_regcomp(ms_regex_t *regex, const char *expr, int cflags) {
   /* Must free in regfree() */
   regex_t *sys_regex = (regex_t *)msSmallMalloc(sizeof(regex_t));
@@ -71,7 +148,13 @@ MS_API_EXPORT(int) ms_regcomp(ms_regex_t *regex, const char *expr, int cflags) {
     reg_cflags |= REG_NOSUB;
   if (cflags & MS_REG_NEWLINE)
     reg_cflags |= REG_NEWLINE;
+#ifdef USE_PCRE2
+  char *escaped_expr = msPCRE2EscapeBracketBackslashes(expr);
+  int ret = regcomp(sys_regex, escaped_expr, reg_cflags);
+  free(escaped_expr);
+#else
   int ret = regcomp(sys_regex, expr, reg_cflags);
+#endif
   if (ret != 0) {
     free(regex->sys_regex);
     regex->sys_regex = NULL;
