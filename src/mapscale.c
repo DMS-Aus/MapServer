@@ -425,7 +425,7 @@ imageObj *msDrawScalebar(mapObj *map) {
       MS_INIT_COLOR(map->scalebar.imagecolor, 255, 255, 255, 255);
   }
 
-  msSetOutputFormatOption(format, "DPI", "100");
+  msSetOutputFormatOption(format, "DPI", "96");
 
   image = msImageCreate(scalebarWidth, sy, format, map->web.imagepath,
                         map->web.imageurl, map->resolution, map->defresolution,
@@ -583,6 +583,9 @@ int msEmbedScalebar(mapObj *map, imageObj *img) {
   rendererVTableObj *renderer;
   symbolObj *embeddedSymbol;
   char *imageType = NULL;
+  double svgDPI = 0.0;
+  double scalebarScale = 1.0;
+  double effSizeX, effSizeY;
 
   index = msGetSymbolIndex(&(map->symbolset), "scalebar", MS_FALSE);
   if (index != -1)
@@ -613,6 +616,9 @@ int msEmbedScalebar(mapObj *map, imageObj *img) {
   renderer = MS_MAP_RENDERER(map);
 
   image = msDrawScalebar(map);
+
+  /* capture the DPI msDrawScalebar() rendered at, before it's restored below */
+  svgDPI = atof(msGetOutputFormatOption(map->outputformat, "DPI", "72"));
 
   if (imageType) {
     map->outputformat =
@@ -656,6 +662,19 @@ int msEmbedScalebar(mapObj *map, imageObj *img) {
     embeddedSymbol->sizex = embeddedSymbol->pixmap_buffer->width;
     embeddedSymbol->sizey = embeddedSymbol->pixmap_buffer->height;
   }
+
+  /* msPreloadSVGSymbol() read the SVG's declared width/height as pixels, but
+   * it was rendered at svgDPI, not 72 DPI (where 1 point == 1 pixel); scale
+   * the drawn symbol back up so it keeps its correct size on the map */
+  if (embeddedSymbol->type == MS_SYMBOL_SVG && svgDPI > 0 && svgDPI != 72.0)
+    scalebarScale = svgDPI / 72.0;
+
+  /* the symbol renders at sizex/sizey * scalebarScale (see
+   * renderSVGSymbolCairo's cairo_scale) - use that for placement, not the
+   * raw declared size */
+  effSizeX = embeddedSymbol->sizex * scalebarScale;
+  effSizeY = embeddedSymbol->sizey * scalebarScale;
+
   if (map->scalebar.transparent) {
     embeddedSymbol->transparent = MS_TRUE;
     embeddedSymbol->transparentcolor = 0;
@@ -663,33 +682,33 @@ int msEmbedScalebar(mapObj *map, imageObj *img) {
 
   switch (map->scalebar.position) {
   case (MS_LL):
-    point.x = MS_NINT(embeddedSymbol->sizex / 2.0) + map->scalebar.offsetx;
-    point.y = map->height - MS_NINT(embeddedSymbol->sizey / 2.0) -
+    point.x = MS_NINT(effSizeX / 2.0) + map->scalebar.offsetx;
+    point.y = map->height - MS_NINT(effSizeY / 2.0) -
               map->scalebar.offsety;
     break;
   case (MS_LR):
-    point.x = map->width - MS_NINT(embeddedSymbol->sizex / 2.0) -
+    point.x = map->width - MS_NINT(effSizeX / 2.0) -
               map->scalebar.offsetx;
-    point.y = map->height - MS_NINT(embeddedSymbol->sizey / 2.0) -
+    point.y = map->height - MS_NINT(effSizeY / 2.0) -
               map->scalebar.offsety;
     break;
   case (MS_LC):
     point.x = MS_NINT(map->width / 2.0) + map->scalebar.offsetx;
-    point.y = map->height - MS_NINT(embeddedSymbol->sizey / 2.0) -
+    point.y = map->height - MS_NINT(effSizeY / 2.0) -
               map->scalebar.offsety;
     break;
   case (MS_UR):
-    point.x = map->width - MS_NINT(embeddedSymbol->sizex / 2.0) -
+    point.x = map->width - MS_NINT(effSizeX / 2.0) -
               map->scalebar.offsetx;
-    point.y = MS_NINT(embeddedSymbol->sizey / 2.0) + map->scalebar.offsety;
+    point.y = MS_NINT(effSizeY / 2.0) + map->scalebar.offsety;
     break;
   case (MS_UL):
-    point.x = MS_NINT(embeddedSymbol->sizex / 2.0) + map->scalebar.offsetx;
-    point.y = MS_NINT(embeddedSymbol->sizey / 2.0) + map->scalebar.offsety;
+    point.x = MS_NINT(effSizeX / 2.0) + map->scalebar.offsetx;
+    point.y = MS_NINT(effSizeY / 2.0) + map->scalebar.offsety;
     break;
   case (MS_UC):
     point.x = MS_NINT(map->width / 2.0) + map->scalebar.offsetx;
-    point.y = MS_NINT(embeddedSymbol->sizey / 2.0) + map->scalebar.offsety;
+    point.y = MS_NINT(effSizeY / 2.0) + map->scalebar.offsety;
     break;
   }
 
@@ -716,13 +735,14 @@ int msEmbedScalebar(mapObj *map, imageObj *img) {
   }
 
   GET_LAYER(map, l)->status = MS_ON;
-  GET_LAYER(map, l)->scalefactor = 1; /* no need to magnify symbol */
+  GET_LAYER(map, l)->scalefactor = scalebarScale; /* usually 1, see svgDPI correction above */
   if (map->scalebar.postlabelcache) { /* add it directly to the image */
     if (msMaybeAllocateClassStyle(GET_LAYER(map, l)->class[0], 0) == MS_FAILURE)
       return MS_FAILURE;
     GET_LAYER(map, l)->class[0]->styles[0]->symbol = s;
     status = msDrawMarkerSymbol(map, img, &point,
-                                GET_LAYER(map, l)->class[0] -> styles[0], 1.0);
+                                GET_LAYER(map, l)->class[0] -> styles[0],
+                                scalebarScale);
     if (MS_UNLIKELY(status == MS_FAILURE)) {
       goto embed_cleanup;
     }
